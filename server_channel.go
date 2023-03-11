@@ -8,17 +8,17 @@ import (
 )
 
 type serverChannel struct {
-	id           uint64
-	t            *serverTransport
-	localAddr    net.Addr
-	remoteAddr   net.Addr
-	closed       int32
-	done         chan struct{}
-	write        chan []byte
-	pipe         *pipeReader
-	remoteWindow int
-	confirm      chan int64
-
+	id            uint64
+	t             *serverTransport
+	localAddr     net.Addr
+	remoteAddr    net.Addr
+	closed        int32
+	done          chan struct{}
+	write         chan []byte
+	pipe          *pipeReader
+	remoteWindow  int
+	confirm       chan int64
+	sendConfirm   chan int64
 	deadline      atomic.Value
 	readDeadline  atomic.Value
 	writeDeadline atomic.Value
@@ -37,14 +37,16 @@ func newServerChannel(t *serverTransport,
 		remoteAddr:   remoteAddr,
 		done:         done,
 		write:        make(chan []byte),
-		pipe:         newPipeReader(done, window),
+		pipe:         newPipeReader(window),
 		remoteWindow: remoteWindow,
 		confirm:      make(chan int64, 1),
+		sendConfirm:  make(chan int64, 10),
 	}
 }
 func (c *serverChannel) Close() (e error) {
 	if c.closed == 0 && atomic.SwapInt32(&c.closed, 1) == 0 {
 		close(c.done)
+		c.pipe.Close()
 	} else {
 		e = ErrChannelClosed
 	}
@@ -91,7 +93,6 @@ func (c *serverChannel) Serve() {
 			c.t.delete(c)
 		}
 	}()
-	go c.pipe.Serve()
 	var (
 		b         []byte
 		exit      bool
@@ -241,8 +242,19 @@ func (c *serverChannel) Confirm(val int64) (overflow bool) {
 	}
 }
 func (c *serverChannel) Read(b []byte) (n int, e error) {
+	n, e = c.pipe.Read(b)
+	if e == nil && n != 0 {
+		select {
+		case c.sendConfirm <- int64(n):
+		case <-c.done:
+		case <-c.t.done:
+		}
+	}
 	return
 }
 func (c *serverChannel) Pipe(b []byte) {
-
+	_, e := c.pipe.Write(b)
+	if e != nil { // pipe 錯誤關閉 channel
+		c.Close()
+	}
 }
