@@ -15,7 +15,7 @@ type serverChannel struct {
 	closed       int32
 	done         chan struct{}
 	write        chan []byte
-	reader       *pipeReader
+	pipe         *pipeReader
 	remoteWindow int
 	confirm      chan int64
 
@@ -37,7 +37,7 @@ func newServerChannel(t *serverTransport,
 		remoteAddr:   remoteAddr,
 		done:         done,
 		write:        make(chan []byte),
-		reader:       newPipeReader(done, window),
+		pipe:         newPipeReader(done, window),
 		remoteWindow: remoteWindow,
 		confirm:      make(chan int64, 1),
 	}
@@ -91,6 +91,7 @@ func (c *serverChannel) Serve() {
 			c.t.delete(c)
 		}
 	}()
+	go c.pipe.Serve()
 	var (
 		b         []byte
 		exit      bool
