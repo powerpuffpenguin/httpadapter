@@ -24,6 +24,7 @@ type serverOptions struct {
 	writeBuffer    int
 	channels       int
 	channelHandler Handler
+	ping           time.Duration
 }
 type Backend interface {
 	Dial() (net.Conn, error)
@@ -97,5 +98,14 @@ func ServerWriteBuffer(writeBuffer int) Option[serverOptions] {
 func ServerWriteBufferChannels(channels int) Option[serverOptions] {
 	return NewOption(func(opts *serverOptions) {
 		opts.channels = channels
+	})
+}
+
+// 在 tcp-chain 上一段時間內如果沒有數據流動則發送一個 ping 指令驗證連接是否有效
+//
+// 如果時間小於 1s 則不會自動發送 ping
+func ServerPing(ping time.Duration) Option[serverOptions] {
+	return NewOption(func(opts *serverOptions) {
+		opts.ping = ping
 	})
 }

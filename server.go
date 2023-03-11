@@ -213,6 +213,7 @@ func (s *Server) serve(l *httpListner, rw net.Conn) {
 		b,
 		s.opts.readBuffer, s.opts.writeBuffer,
 		s.opts.channels,
+		s.opts.ping,
 	)
 }
 func (s *Server) sendHello(rw net.Conn, b []byte, hello Hello, version string) (e error) {

@@ -7,6 +7,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type serverTransport struct {
@@ -40,7 +41,11 @@ func (t *serverTransport) Close() {
 		t.c.Close()
 	}
 }
-func (t *serverTransport) Serve(b []byte, readBuffer, writeBuffer, channels int) {
+func (t *serverTransport) Serve(b []byte,
+	readBuffer, writeBuffer,
+	channels int,
+	ping time.Duration,
+) {
 	defer t.Close()
 
 	var (
@@ -50,16 +55,31 @@ func (t *serverTransport) Serve(b []byte, readBuffer, writeBuffer, channels int)
 		ch         = t.ch
 		localAddr  = t.c.LocalAddr()
 		remoteAddr = t.c.RemoteAddr()
+		chping     chan int
 	)
 	if readBuffer > 0 {
 		r = bufio.NewReaderSize(r, readBuffer)
 	}
+
+	// ping
+	if ping > time.Second {
+		chping = make(chan int, 1)
+		go t.servePing(ping, chping)
+	}
+
 	// 寫入 tcp-chain
-	go t.write(writeBuffer)
+	go t.write(writeBuffer, chping)
 
 	// 讀取 tcp-chain
 TS:
 	for {
+		if chping != nil {
+			select {
+			case chping <- 1:
+			default:
+			}
+		}
+
 		// 讀取指令
 		_, e = io.ReadFull(r, b[:1])
 		if e != nil {
@@ -197,7 +217,40 @@ func (t *serverTransport) send(b []byte) (exit bool) {
 	}()
 	return
 }
-func (t *serverTransport) write(writeBuffer int) {
+func (t *serverTransport) servePing(duration time.Duration, ch chan int) {
+	var (
+		at    = time.Now()
+		timer = time.NewTimer(duration)
+		data  = []byte{
+			byte(CommandPing),
+		}
+	)
+	for {
+		select {
+		case <-t.done:
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return
+		case <-timer.C:
+			wait := time.Since(at) - duration
+			if wait > 0 {
+				timer.Reset(wait)
+			} else {
+				select {
+				case <-t.done:
+					return
+				case t.ch <- data:
+				}
+				at = time.Now()
+				timer.Reset(duration)
+			}
+		case <-ch:
+			at = time.Now()
+		}
+	}
+}
+func (t *serverTransport) write(writeBuffer int, chping chan int) {
 	defer t.Close()
 	var (
 		b  []byte
@@ -206,6 +259,13 @@ func (t *serverTransport) write(writeBuffer int) {
 		ch = t.ch
 	)
 	for {
+		if chping != nil {
+			select {
+			case chping <- 2:
+			default:
+			}
+		}
+
 		// 讀取待寫入數據
 		select {
 		case b = <-ch:
