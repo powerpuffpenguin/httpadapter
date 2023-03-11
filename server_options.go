@@ -7,21 +7,23 @@ import (
 )
 
 var defaultServerOptions = serverOptions{
-	window:      32 * 1024,
-	timeout:     time.Second * 10,
-	readBuffer:  4096,
-	writeBuffer: 4096,
-	channels:    0,
+	window:         32 * 1024,
+	timeout:        time.Second * 10,
+	readBuffer:     4096,
+	writeBuffer:    4096,
+	channels:       0,
+	channelHandler: defaultHandler,
 }
 
 type serverOptions struct {
-	window      uint16
-	timeout     time.Duration
-	handler     http.Handler
-	backend     Backend
-	readBuffer  int
-	writeBuffer int
-	channels    int
+	window         uint16
+	timeout        time.Duration
+	handler        http.Handler
+	backend        Backend
+	readBuffer     int
+	writeBuffer    int
+	channels       int
+	channelHandler Handler
 }
 type Backend interface {
 	Dial() (net.Conn, error)
@@ -40,6 +42,13 @@ func ServerWindow(window uint16) Option[serverOptions] {
 func ServerHTTP(handler http.Handler) Option[serverOptions] {
 	return NewOption(func(opts *serverOptions) {
 		opts.handler = handler
+	})
+}
+
+// 設置如何處理 channel
+func ServerHandler(handler Handler) Option[serverOptions] {
+	return NewOption(func(opts *serverOptions) {
+		opts.channelHandler = handler
 	})
 }
 

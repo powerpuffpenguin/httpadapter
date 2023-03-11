@@ -12,6 +12,7 @@ import (
 type serverTransport struct {
 	c                    net.Conn
 	window, remoteWindow int
+	handler              Handler
 	done                 chan struct{}
 	closed               int32
 	sync.Mutex
@@ -21,11 +22,13 @@ type serverTransport struct {
 
 func newServerTransport(c net.Conn,
 	window, remoteWindow int,
+	handler Handler,
 ) *serverTransport {
 	return &serverTransport{
 		c:            c,
 		window:       window,
 		remoteWindow: remoteWindow,
+		handler:      handler,
 		done:         make(chan struct{}),
 		keys:         make(map[uint64]*serverChannel),
 		ch:           make(chan []byte, 100),
@@ -104,6 +107,7 @@ TS:
 					t.window, t.remoteWindow,
 				)
 				go val.Serve()
+				go t.handler.ServeChannel(val)
 				t.keys[id] = val
 				data[1+8] = 0
 			}
@@ -145,7 +149,7 @@ TS:
 				ServerLogger.Printf(CommandWrite.String()+": channel(%v) not found\n", id)
 			}
 		case CommandConfirm: // 確認 channel 數據
-			_, e = io.ReadFull(r, b[:8+4])
+			_, e = io.ReadFull(r, b[:8+2])
 			if e != nil {
 				break TS
 			}
@@ -154,7 +158,7 @@ TS:
 			sc, exists := t.keys[id]
 			t.Unlock()
 			if exists {
-				if sc.Confirm(int64(binary.BigEndian.Uint32(b[8:]))) {
+				if sc.Confirm(int(binary.BigEndian.Uint16(b[8:]))) {
 					t.sendClose(id)
 					ServerLogger.Printf(CommandConfirm.String()+": channel(%v) overflow\n", id)
 				}

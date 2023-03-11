@@ -2,6 +2,7 @@ package httpadapter
 
 import (
 	"context"
+	"encoding/binary"
 	"net"
 	"sync/atomic"
 	"time"
@@ -17,8 +18,8 @@ type serverChannel struct {
 	write         chan []byte
 	pipe          *pipeReader
 	remoteWindow  int
-	confirm       chan int64
-	sendConfirm   chan int64
+	confirm       chan int
+	sendConfirm   chan int
 	deadline      atomic.Value
 	readDeadline  atomic.Value
 	writeDeadline atomic.Value
@@ -39,8 +40,8 @@ func newServerChannel(t *serverTransport,
 		write:        make(chan []byte),
 		pipe:         newPipeReader(window),
 		remoteWindow: remoteWindow,
-		confirm:      make(chan int64, 1),
-		sendConfirm:  make(chan int64, 10),
+		confirm:      make(chan int, 1),
+		sendConfirm:  make(chan int, 10),
 	}
 }
 func (c *serverChannel) Close() (e error) {
@@ -93,6 +94,7 @@ func (c *serverChannel) Serve() {
 			c.t.delete(c)
 		}
 	}()
+	go c.serveConfirm()
 	var (
 		b         []byte
 		exit      bool
@@ -142,8 +144,7 @@ func (c *serverChannel) choose(b []byte) (data []byte, confirm int, exit bool) {
 		case <-c.done:
 			exit = true
 		case data = <-c.write:
-		case v := <-c.confirm:
-			confirm = int(v)
+		case confirm = <-c.confirm:
 		}
 	} else {
 		data = b
@@ -152,8 +153,7 @@ func (c *serverChannel) choose(b []byte) (data []byte, confirm int, exit bool) {
 			exit = true
 		case <-c.done:
 			exit = true
-		case v := <-c.confirm:
-			confirm = int(v)
+		case confirm = <-c.confirm:
 		default:
 		}
 	}
@@ -217,7 +217,7 @@ func (c *serverChannel) Write(b []byte) (n int, e error) {
 	}
 	return
 }
-func (c *serverChannel) Confirm(val int64) (overflow bool) {
+func (c *serverChannel) Confirm(val int) (overflow bool) {
 	select {
 	case <-c.done:
 		return
@@ -234,10 +234,50 @@ func (c *serverChannel) Confirm(val int64) (overflow bool) {
 			return
 		case old := <-c.confirm:
 			val += old
-			if val >= int64(c.remoteWindow) {
+			if val >= c.remoteWindow {
 				overflow = true
 				return
 			}
+		}
+	}
+}
+func (c *serverChannel) serveConfirm() {
+	var (
+		v0, v1 int
+		window = c.remoteWindow
+	)
+	for {
+		select {
+		case <-c.done:
+			return
+		case <-c.t.done:
+			return
+		case v0 = <-c.sendConfirm:
+		}
+
+	CSF:
+		for v0 < window {
+			select {
+			case <-c.done:
+				return
+			case <-c.t.done:
+				return
+			case v1 = <-c.sendConfirm:
+				v0 += v1
+			default:
+				break CSF
+			}
+		}
+		data := make([]byte, 1+8+2)
+		data[0] = 6
+		binary.BigEndian.PutUint64(data[1:], c.id)
+		binary.BigEndian.PutUint16(data[1+8:], uint16(v0))
+		select {
+		case <-c.done:
+			return
+		case <-c.t.done:
+			return
+		case c.t.ch <- data:
 		}
 	}
 }
@@ -245,7 +285,7 @@ func (c *serverChannel) Read(b []byte) (n int, e error) {
 	n, e = c.pipe.Read(b)
 	if e == nil && n != 0 {
 		select {
-		case c.sendConfirm <- int64(n):
+		case c.sendConfirm <- n:
 		case <-c.done:
 		case <-c.t.done:
 		}

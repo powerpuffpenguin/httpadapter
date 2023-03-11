@@ -208,6 +208,7 @@ func (s *Server) serve(l *httpListner, rw net.Conn) {
 	// 執行轉發
 	newServerTransport(rw,
 		int(s.opts.window), int(window),
+		s.opts.channelHandler,
 	).Serve(
 		b,
 		s.opts.readBuffer, s.opts.writeBuffer,

@@ -131,4 +131,4 @@ confirm 是極爲重要的一個指令，每個 channel 都知道對方 channel 
 |--- |--- |---|---|
 |   command   |   0 |  1  |   固定爲 6 |
 |   id  |   1  |    8   |   要確認的 channel id |
-|   size  |   9  |    4   |   這是一個 uint32 值，表示確認多大 window數據被處理 |
+|   size  |   9  |    2   |   這是一個 uint16 值，表示確認多大 window數據被處理 |
