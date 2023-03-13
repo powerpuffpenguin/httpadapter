@@ -3,14 +3,16 @@ package httpadapter
 import (
 	"context"
 	"crypto/tls"
-	"encoding/binary"
 	"errors"
 	"io"
 	"net"
 	"net/http"
-	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/powerpuffpenguin/httpadapter/core"
+	"github.com/powerpuffpenguin/httpadapter/pipe"
 )
 
 var ErrServerClosed = errors.New("httpadapter: Server closed")
@@ -25,10 +27,10 @@ type Server struct {
 }
 
 // 創建一個 適配 服務器
-func NewServer(opt ...Option[serverOptions]) *Server {
+func NewServer(opt ...ServerOption) *Server {
 	var opts = defaultServerOptions
 	for _, o := range opt {
-		o.apply(&opts)
+		o.Apply(&opts)
 	}
 	return &Server{
 		opts: opts,
@@ -75,29 +77,38 @@ func (s *Server) ListenAndServeTLS(addr, certFile, keyFile string) (e error) {
 }
 
 // 在監聽器上運行
-func (s *Server) Serve(l net.Listener) error {
+func (s *Server) Serve(l net.Listener) (e error) {
+	var wait sync.WaitGroup
 	var hl *httpListner
 	if s.opts.handler != nil {
 		hl = &httpListner{
 			done: s.done,
 			ch:   make(chan net.Conn),
 		}
-		go http.Serve(hl, s.opts.handler)
+		wait.Add(1)
+		go func() {
+			http.Serve(hl, s.opts.handler)
+			wait.Done()
+		}()
 	}
+	wait.Add(1)
 	go func() {
 		<-s.done
 		l.Close()
+		wait.Done()
 	}()
 	var tempDelay time.Duration // how long to sleep on accept failure
+SS:
 	for {
 		rw, err := l.Accept()
 		if err != nil {
 			select {
 			case <-s.done:
-				return ErrServerClosed
+				e = ErrServerClosed
+				break SS
 			default:
 			}
-			if ne, ok := err.(net.Error); ok && ne.Temporary() {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				if tempDelay == 0 {
 					tempDelay = 5 * time.Millisecond
 				} else {
@@ -110,16 +121,20 @@ func (s *Server) Serve(l net.Listener) error {
 				time.Sleep(tempDelay)
 				continue
 			}
-			return err
+			e = err
+			break
 		}
 		tempDelay = 0
 		go s.serve(hl, rw)
 	}
+
+	wait.Wait()
+	return
 }
 
 type asyncHello struct {
 	backend net.Conn
-	code    Hello
+	code    core.Hello
 	version string
 	window  uint16
 	e       error
@@ -129,8 +144,8 @@ func (s *Server) serve(l *httpListner, rw net.Conn) {
 	var (
 		backend net.Conn
 		e       error
-		b       = make([]byte, 1024)
-		code    Hello
+		b       = make([]byte, 256)
+		code    core.Hello
 		version string
 		window  uint16
 	)
@@ -171,8 +186,8 @@ func (s *Server) serve(l *httpListner, rw net.Conn) {
 		if s.opts.backend != nil {
 			dst, e := s.opts.backend.Dial()
 			if e == nil {
-				go Copy(dst, backend, nil)
-				Copy(backend, dst, nil)
+				go pipe.Copy(dst, backend, nil)
+				pipe.Copy(backend, dst, nil)
 			} else {
 				backend.Close()
 			}
@@ -189,7 +204,7 @@ func (s *Server) serve(l *httpListner, rw net.Conn) {
 			}
 		}
 		// 返回協議未知
-		e = s.sendHello(rw, b, HelloInvalidProtocol, ``)
+		e = s.sendHello(rw, b, core.HelloInvalidProtocol, ``)
 		if e != nil {
 			rw.Close()
 			return
@@ -216,87 +231,76 @@ func (s *Server) serve(l *httpListner, rw net.Conn) {
 		s.opts.ping,
 	)
 }
-func (s *Server) sendHello(rw net.Conn, b []byte, hello Hello, version string) (e error) {
-	copy(b, StringToBytes(Flag))
-
-	i := len(Flag)
-	b[i] = uint8(hello)
-	i++
-
-	if hello == HelloOk {
-		binary.BigEndian.PutUint16(b[i:], s.opts.window)
-	} else {
-		binary.BigEndian.PutUint16(b[i:], 0)
+func (s *Server) sendHello(rw net.Conn, b []byte, hello core.Hello, version string) (e error) {
+	msg := core.ServerHello{
+		Code:   hello,
+		Window: s.opts.window,
 	}
-	i += 2
-
-	if hello == HelloOk {
-		binary.BigEndian.PutUint16(b[i:], uint16(len(version)))
-		i += 2
-
-		n := copy(b[i:], version)
-		i += n
-		_, e = rw.Write(b[:i])
+	if hello == core.HelloOk {
+		msg.Message = version
 	} else {
-		msg := hello.String()
-		binary.BigEndian.PutUint16(b[i:], uint16(len(msg)))
-		i += 2
-
-		n := copy(b[i:], msg)
-		i += n
-		_, e = rw.Write(b[:i])
+		msg.Message = hello.String()
 	}
-	return
-}
-func (s *Server) hello(rw net.Conn, b []byte) (backend net.Conn, code Hello, version string, window uint16, e error) {
-	min := len(Flag)
-	_, e = io.ReadFull(rw, b[:min])
+	data, e := msg.MarshalTo(b)
 	if e != nil {
 		return
 	}
-	if BytesToString(b[:min]) != Flag {
+	_, e = rw.Write(data)
+	return
+}
+func (s *Server) hello(rw net.Conn, b []byte) (backend net.Conn, code core.Hello, version string, window uint16, e error) {
+	msg, code, flag, e := core.ReadClientHello(rw, b)
+	if code == core.HelloInvalidProtocol {
 		backend = &httpConn{
 			Conn: rw,
-			b:    b[:min],
+			b:    flag,
 		}
 		return
 	}
-	min = 4
-	_, e = io.ReadFull(rw, b[:min])
 	if e != nil {
+		if e == io.ErrShortBuffer {
+			e = nil
+			code = core.HelloInvalidVersion
+		}
+		return
+	} else if code != core.HelloOk {
 		return
 	}
-	window = binary.BigEndian.Uint16(b)
-	if window < 1 {
-		code = HelloWindow
-		return
-	}
-	min = int(binary.BigEndian.Uint16(b[2:]))
-	if len(b) < min {
-		b = make([]byte, min)
-	} else {
-		b = b[:min]
-	}
-	_, e = io.ReadFull(rw, b)
-	if e != nil {
-		return
-	}
-	str := BytesToString(b)
-	strs := strings.Split(str, ",")
-	for _, str := range strs {
-		if str == ProtocolVersion {
-			code = HelloOk
-			version = ProtocolVersion
+	for _, v := range msg.Version {
+		if v == core.ProtocolVersion {
+			code = core.HelloOk
+			window = msg.Window
+			version = core.ProtocolVersion
 			return
 		}
 	}
-	code = HelloInvalidVersion
+	code = core.HelloInvalidVersion
 	return
 }
 
 // 返回服務器的 channel window 大小
 func (s *Server) Window() uint16 {
 	return s.opts.window
+}
+
+// 返回服務器兼容的 http 處理器
+func (s *Server) HTTP() http.Handler {
+	return s.opts.handler
+}
+
+// 返回服務器的 channel 處理器
+func (s *Server) Handler() Handler {
+	return s.opts.channelHandler
+}
+
+// 返回未知協議的後端
+func (s *Server) Backend() Backend {
+	return s.opts.backend
+}
+
+// 返回客戶端連接的超時時間，<1 則永不超時
+func (s *Server) Timeout() time.Duration {
+	return s.opts.timeout
 }
 
 // 返回 tcp-chain 讀取緩衝區大小
@@ -312,4 +316,9 @@ func (s *Server) WriteBuffer() int {
 // 返回服務器運行的 併發 channel 數量
 func (s *Server) Channels() int {
 	return s.opts.channels
+}
+
+// 返回服務器每隔多久對沒有數據的連接發送 tcp ping，<1 則不會發送
+func (s *Server) Ping() time.Duration {
+	return s.opts.ping
 }

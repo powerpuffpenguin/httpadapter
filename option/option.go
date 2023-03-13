@@ -1,10 +1,10 @@
-package httpadapter
+package option
 
 type Option[T any] interface {
-	apply(*T)
+	Apply(*T)
 }
 
-func NewOption[T any](f func(*T)) Option[T] {
+func New[T any](f func(*T)) Option[T] {
 	return newFuncOptions(f)
 }
 
@@ -17,6 +17,6 @@ func newFuncOptions[T any](f func(*T)) *funcOptions[T] {
 		f: f,
 	}
 }
-func (o *funcOptions[T]) apply(opts *T) {
+func (o *funcOptions[T]) Apply(opts *T) {
 	o.f(opts)
 }

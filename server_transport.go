@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/powerpuffpenguin/httpadapter/core"
 )
 
 type serverTransport struct {
@@ -51,11 +53,10 @@ func (t *serverTransport) Serve(b []byte,
 	var (
 		r          io.Reader = t.c
 		e          error
-		keys       = make(map[uint64]*serverChannel)
 		ch         = t.ch
 		localAddr  = t.c.LocalAddr()
 		remoteAddr = t.c.RemoteAddr()
-		chping     chan int
+		active     chan int
 	)
 	if readBuffer > 0 {
 		r = bufio.NewReaderSize(r, readBuffer)
@@ -63,19 +64,27 @@ func (t *serverTransport) Serve(b []byte,
 
 	// ping
 	if ping > time.Second {
-		chping = make(chan int, 1)
-		go t.servePing(ping, chping)
+		active = make(chan int, 1)
+		go core.Ping(
+			ping,
+			t.done, active,
+			ch,
+			[]byte{byte(core.CommandPing)},
+		)
 	}
 
 	// 寫入 tcp-chain
-	go t.write(writeBuffer, chping)
+	go core.Write(t.c, writeBuffer,
+		t.done, active,
+		ch,
+	)
 
 	// 讀取 tcp-chain
 TS:
 	for {
-		if chping != nil {
+		if active != nil {
 			select {
-			case chping <- 1:
+			case active <- 1:
 			default:
 			}
 		}
@@ -85,26 +94,14 @@ TS:
 		if e != nil {
 			break
 		}
-		cmd := Command(b[0])
+		cmd := core.Command(b[0])
 		switch cmd {
-		case CommandPing:
-		case CommandPong: // 響應 pong
-			_, e = io.ReadFull(r, b[:4])
-			if e != nil {
+		case core.CommandPing:
+		case core.CommandPong: // 響應 pong
+			if onPong(r, b, t.done, ch) {
 				break TS
 			}
-			data := make([]byte, 5)
-			data[0] = byte(CommandPong)
-			copy(data[1:], b[:4])
-			select {
-			case <-t.done:
-				break TS
-			case ch <- data:
-			}
-			if t.send(data) {
-				break TS
-			}
-		case CommandCreate: // 創建 channel
+		case core.CommandCreate: // 創建 channel
 			_, e = io.ReadFull(r, b[:8])
 			if e != nil {
 				break TS
@@ -112,7 +109,7 @@ TS:
 			id := binary.BigEndian.Uint64(b)
 
 			data := make([]byte, 1+8+1)
-			data[0] = byte(CommandCreate)
+			data[0] = byte(core.CommandCreate)
 			binary.BigEndian.PutUint64(data[1:], id)
 
 			t.Lock()
@@ -132,10 +129,10 @@ TS:
 				data[1+8] = 0
 			}
 			t.Unlock()
-			if t.send(data) {
+			if core.PostWrite(t.done, t.ch, data) {
 				break TS
 			}
-		case CommandClose: // 客戶端要求關閉 channel
+		case core.CommandClose: // 客戶端要求關閉 channel
 			_, e = io.ReadFull(r, b[:8])
 			if e != nil {
 				break TS
@@ -147,7 +144,7 @@ TS:
 				delete(t.keys, id)
 			}
 			t.Unlock()
-		case CommandWrite: // 向 channel 寫入數據
+		case core.CommandWrite: // 向 channel 寫入數據
 			_, e = io.ReadFull(r, b[:8+2])
 			if e != nil {
 				break TS
@@ -166,9 +163,9 @@ TS:
 				sc.Pipe(data)
 			} else {
 				t.sendClose(id)
-				ServerLogger.Printf(CommandWrite.String()+": channel(%v) not found\n", id)
+				ServerLogger.Printf(core.CommandWrite.String()+": channel(%v) not found\n", id)
 			}
-		case CommandConfirm: // 確認 channel 數據
+		case core.CommandConfirm: // 確認 channel 數據
 			_, e = io.ReadFull(r, b[:8+2])
 			if e != nil {
 				break TS
@@ -180,125 +177,25 @@ TS:
 			if exists {
 				if sc.Confirm(int(binary.BigEndian.Uint16(b[8:]))) {
 					t.sendClose(id)
-					ServerLogger.Printf(CommandConfirm.String()+": channel(%v) overflow\n", id)
+					ServerLogger.Printf(core.CommandConfirm.String()+": channel(%v) overflow\n", id)
 				}
 			} else {
 				t.sendClose(id)
-				ServerLogger.Printf(CommandConfirm.String()+": channel(%v) not found\n", id)
+				ServerLogger.Printf(core.CommandConfirm.String()+": channel(%v) not found\n", id)
 			}
 		default:
-			ServerLogger.Println(cmd.String())
+			ServerLogger.Println(`Unknow Command:`, cmd.String())
 			break TS
 		}
 	}
 	// 清理 channel
 	t.Lock()
-	for _, c := range keys {
+	for _, c := range t.keys {
 		c.Close()
 	}
 	t.Unlock()
 }
-func (t *serverTransport) send(b []byte) (exit bool) {
-	select {
-	case <-t.done:
-		exit = true
-		return
-	case t.ch <- b:
-		return
-	default:
-	}
-	go func() {
-		select {
-		case <-t.done:
-			return
-		case t.ch <- b:
-			return
-		}
-	}()
-	return
-}
-func (t *serverTransport) servePing(duration time.Duration, ch chan int) {
-	var (
-		at    = time.Now()
-		timer = time.NewTimer(duration)
-		data  = []byte{
-			byte(CommandPing),
-		}
-	)
-	for {
-		select {
-		case <-t.done:
-			if !timer.Stop() {
-				<-timer.C
-			}
-			return
-		case <-timer.C:
-			wait := time.Since(at) - duration
-			if wait > 0 {
-				timer.Reset(wait)
-			} else {
-				select {
-				case <-t.done:
-					return
-				case t.ch <- data:
-				}
-				at = time.Now()
-				timer.Reset(duration)
-			}
-		case <-ch:
-			at = time.Now()
-		}
-	}
-}
-func (t *serverTransport) write(writeBuffer int, chping chan int) {
-	defer t.Close()
-	var (
-		b  []byte
-		w  = bufio.NewWriterSize(t.c, writeBuffer)
-		e  error
-		ch = t.ch
-	)
-	for {
-		if chping != nil {
-			select {
-			case chping <- 2:
-			default:
-			}
-		}
 
-		// 讀取待寫入數據
-		select {
-		case b = <-ch:
-			_, e = w.Write(b)
-			if e != nil {
-				return
-			}
-		case <-t.done:
-			return
-		}
-
-		// 合併剩餘數據
-	FM:
-		for {
-			select {
-			case b = <-ch:
-				_, e = w.Write(b)
-				if e != nil {
-					return
-				}
-			case <-t.done:
-				return
-			default:
-				break FM
-			}
-		}
-		// 刷新剩餘數據
-		e = w.Flush()
-		if e != nil {
-			break
-		}
-	}
-}
 func (t *serverTransport) delete(c *serverChannel) {
 	deleted := false
 	t.Lock()
@@ -314,7 +211,7 @@ func (t *serverTransport) delete(c *serverChannel) {
 }
 func (t *serverTransport) sendClose(id uint64) {
 	b := make([]byte, 1+8)
-	b[0] = byte(CommandClose)
+	b[0] = byte(core.CommandClose)
 	binary.BigEndian.PutUint64(b[1:], id)
 	select {
 	case <-t.done:

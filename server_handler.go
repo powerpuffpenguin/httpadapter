@@ -15,5 +15,5 @@ type channelHandler struct {
 }
 
 func (channelHandler) ServeChannel(c net.Conn) {
-	fmt.Println(c)
+	fmt.Println(`ServeChannel`, c)
 }

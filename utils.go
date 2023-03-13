@@ -2,27 +2,27 @@ package httpadapter
 
 import (
 	"io"
-	"time"
+
+	"github.com/powerpuffpenguin/httpadapter/core"
 )
 
-func Copy(dst, src io.ReadWriteCloser, b []byte) {
-	if len(b) == 0 {
-		b = make([]byte, 1024*32)
+func onPong(r io.Reader, buf []byte,
+	done <-chan struct{},
+	w chan<- []byte,
+) (exit bool) {
+	_, e := io.ReadFull(r, buf[1:5])
+	if e != nil {
+		exit = true
+		return
 	}
-	for {
-		n, e := src.Read(b)
-		if e != nil {
-			src.Close()
-			time.Sleep(time.Second)
-			dst.Close() // 等待 dst 寫入完成
-			break
-		}
-		_, e = dst.Write(b[:n])
-		if e != nil {
-			dst.Close()
-			time.Sleep(time.Second)
-			src.Close() // 等待 src 寫入完成
-			break
-		}
+	data := make([]byte, 5)
+	copy(data, buf[:5])
+	select {
+	case <-done:
+		exit = true
+		return
+	case w <- data:
 	}
+	exit = core.PostWrite(done, w, data)
+	return
 }

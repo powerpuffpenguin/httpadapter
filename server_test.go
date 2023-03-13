@@ -7,67 +7,60 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/powerpuffpenguin/httpadapter"
+	"github.com/powerpuffpenguin/httpadapter/core"
 	"github.com/stretchr/testify/assert"
 )
 
 const Addr = "127.0.0.1:12233"
 
-func newHTTP(t *testing.T) (s *httpadapter.Server, l net.Listener) {
+type _Server struct {
+	*httpadapter.Server
+	done chan struct{}
+}
+
+func newServer(t *testing.T, opt ...httpadapter.ServerOption) *_Server {
+	s, l := newHTTP(t, opt...)
+	done := make(chan struct{})
+	go func() {
+		s.Serve(l)
+		close(done)
+	}()
+	return &_Server{
+		Server: s,
+		done:   done,
+	}
+}
+func (s *_Server) CloseAndWait() {
+	s.Server.Close()
+	<-s.done
+}
+
+func newHTTP(t *testing.T, opt ...httpadapter.ServerOption) (s *httpadapter.Server, l net.Listener) {
 	l, e := net.Listen(`tcp`, Addr)
 	if !assert.Nil(t, e) {
 		t.FailNow()
 	}
+	s = httpadapter.NewServer(
+		opt...,
+	)
+	return
+}
+func TestServerHTTP(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc(`/version`, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(`Content-Type`, `text/plain; charset=utf-8`)
 		w.Write([]byte(fmt.Sprintf("version=%v\nprotocol=%v\n",
-			httpadapter.Version,
-			httpadapter.ProtocolVersion,
+			core.Version,
+			core.ProtocolVersion,
 		)))
 	})
-	s = httpadapter.NewServer(
+	s := newServer(t,
 		httpadapter.ServerHTTP(mux),
 	)
-
-	return
-}
-
-var testErrors = []struct {
-	Window  uint16
-	Version []string
-	Code    httpadapter.Hello
-	Match   string
-}{
-	{
-		Window:  0,
-		Version: []string{"1.0"},
-		Code:    httpadapter.HelloWindow,
-	},
-	{
-		Window:  1,
-		Version: []string{"0.15"},
-		Code:    httpadapter.HelloInvalidVersion,
-	},
-	{
-		Window:  1,
-		Version: []string{"0.15", httpadapter.ProtocolVersion},
-		Code:    httpadapter.HelloOk,
-		Match:   httpadapter.ProtocolVersion,
-	},
-}
-
-func TestServer(t *testing.T) {
-	s, l := newHTTP(t)
-	var wait sync.WaitGroup
-	wait.Add(1)
-	go func() {
-		s.Serve(l)
-		wait.Done()
-	}()
+	defer s.CloseAndWait()
 
 	resp, e := http.Get(`http://` + Addr + "/version")
 	if !assert.Nil(t, e) {
@@ -86,10 +79,81 @@ func TestServer(t *testing.T) {
 	if !assert.Equal(t, http.StatusNotFound, resp.StatusCode) {
 		t.FailNow()
 	}
+
+	hello := core.ClientHello{
+		Window:  1,
+		Version: []string{"noany"},
+	}
+	b, e := hello.Marshal()
+	if !assert.Nil(t, e) {
+		t.FailNow()
+	}
+
+	c, e := net.Dial(`tcp`, Addr)
+	if !assert.Nil(t, e) {
+		t.FailNow()
+	}
+	defer c.Close()
+	_, e = c.Write(b)
+	if !assert.Nil(t, e) {
+		t.FailNow()
+	}
+
+	sh, e := core.ReadServerHello(c, nil)
+	if !assert.Nil(t, e) {
+		t.FailNow()
+	}
+	if !assert.Equal(t, sh.Window, s.Window()) {
+		t.FailNow()
+	}
+	if !assert.Equal(t, sh.Code, core.HelloInvalidVersion) {
+		t.FailNow()
+	}
+}
+
+var testErrors = []struct {
+	Flag    string
+	Window  uint16
+	Version []string
+	Code    core.Hello
+	Match   string
+}{
+	{
+		Window:  0,
+		Version: []string{"1.0"},
+		Code:    core.HelloInvalidWindow,
+	},
+	{
+		Window:  1,
+		Version: []string{"0.15"},
+		Code:    core.HelloInvalidVersion,
+	},
+	{
+		Window:  1,
+		Version: []string{"0.15", core.ProtocolVersion},
+		Code:    core.HelloOk,
+		Match:   core.ProtocolVersion,
+	},
+	{
+		Flag:    `Httpadapter`,
+		Window:  1,
+		Version: []string{core.ProtocolVersion},
+		Code:    core.HelloInvalidProtocol,
+	},
+}
+
+func TestServer(t *testing.T) {
+	s := newServer(t)
+	defer s.CloseAndWait()
+
 	for _, node := range testErrors {
 		vs := strings.Join(node.Version, ",")
-		b := make([]byte, len(httpadapter.Flag)+2+2+len(vs))
-		i := copy(b, httpadapter.Flag)
+		b := make([]byte, len(core.Flag)+2+2+len(vs))
+		flag := node.Flag
+		if flag == `` {
+			flag = core.Flag
+		}
+		i := copy(b, flag)
 		binary.BigEndian.PutUint16(b[i:], node.Window)
 		i += 2
 		binary.BigEndian.PutUint16(b[i:], uint16(len(vs)))
@@ -105,34 +169,29 @@ func TestServer(t *testing.T) {
 			t.FailNow()
 		}
 
-		min := len(httpadapter.Flag) + 1 + 2 + 2
+		min := len(core.Flag) + 1 + 2 + 2
 		_, e = io.ReadAtLeast(c, b[:min], min)
 		if !assert.Nil(t, e) {
 			t.FailNow()
 		}
-		i = len(httpadapter.Flag)
-		if !assert.Equal(t, httpadapter.Flag, string(b[:i])) {
+		i = len(core.Flag)
+		if !assert.Equal(t, core.Flag, string(b[:i])) {
 			t.FailNow()
 		}
-		if !assert.Equal(t, node.Code, httpadapter.Hello(b[i])) {
+		if !assert.Equal(t, node.Code, core.Hello(b[i])) {
 			t.FailNow()
 		}
 		i++
-		var str string
-		if node.Code == httpadapter.HelloOk {
-			window := binary.BigEndian.Uint16(b[i:])
-			if !assert.Equal(t, s.Window(), window) {
-				t.FailNow()
-			}
-			i += 2
 
+		window := binary.BigEndian.Uint16(b[i:])
+		if !assert.Equal(t, s.Window(), window) {
+			t.FailNow()
+		}
+		i += 2
+		var str string
+		if node.Code == core.HelloOk {
 			str = node.Match
 		} else {
-			if !assert.Equal(t, uint16(0), binary.BigEndian.Uint16(b[i:])) {
-				t.FailNow()
-			}
-			i += 2
-
 			str = node.Code.String()
 		}
 
@@ -154,6 +213,4 @@ func TestServer(t *testing.T) {
 		}
 		c.Close()
 	}
-	l.Close()
-	wait.Wait()
 }
