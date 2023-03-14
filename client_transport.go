@@ -254,7 +254,7 @@ CS:
 				}
 			} else {
 				t.sendClose(id)
-				Logger.Printf(core.CommandConfirm.String()+": channel(%v) not found\n", id)
+				// Logger.Printf(core.CommandConfirm.String()+": channel(%v) not found\n", id)
 			}
 		default:
 			Logger.Println(`Unknow Command:`, cmd.String())
