@@ -2,10 +2,11 @@ package httpadapter
 
 import (
 	"context"
-	"encoding/binary"
 	"net"
 	"sync/atomic"
 	"time"
+
+	"github.com/powerpuffpenguin/httpadapter/core"
 )
 
 type dataTransport interface {
@@ -94,10 +95,9 @@ func (c *dataChannel) SetWriteDeadline(t time.Time) (e error) {
 func (c *dataChannel) Serve() {
 	defer func() {
 		// 關閉 channel
-		if c.Close() == nil {
-			// 通知 tcp-chain 關閉
-			c.t.delete(c)
-		}
+		c.Close()
+		// 通知 tcp-chain 關閉
+		c.t.delete(c)
 	}()
 	go c.serveConfirm()
 
@@ -110,6 +110,7 @@ func (c *dataChannel) Serve() {
 		size      int
 		done      = c.t.Done()
 		ch        = c.t.getWriter()
+		data      []byte
 	)
 	for {
 		b, confirm, exit = c.choose(b)
@@ -132,14 +133,20 @@ func (c *dataChannel) Serve() {
 			if size > available {
 				size = available
 			}
+			data = make([]byte, 11+size)
+			data[0] = 5
+			core.ByteOrder.PutUint64(data[1:], c.id)
+			core.ByteOrder.PutUint16(data[9:], uint16(size))
+			copy(data[11:], b[:size])
 			select {
 			case <-done:
 				return
 			case <-c.done:
 				return
-			case ch <- b[:size]:
+			case ch <- data:
 				writed += size
 				b = b[size:]
+				size = len(b)
 			}
 		}
 	}
@@ -182,7 +189,7 @@ func (c *dataChannel) Write(b []byte) (n int, e error) {
 		}
 	}
 	var timer *time.Timer
-	if deadline.IsZero() {
+	if !deadline.IsZero() {
 		now := time.Now()
 		if deadline.After(now) {
 			timer = time.NewTimer(deadline.Sub(now))
@@ -201,7 +208,7 @@ func (c *dataChannel) Write(b []byte) (n int, e error) {
 		case <-c.done:
 			e = ErrChannelClosed
 		case c.write <- data:
-			n = len(data)
+			n = len(b)
 		}
 	} else {
 		select {
@@ -219,7 +226,7 @@ func (c *dataChannel) Write(b []byte) (n int, e error) {
 			if !timer.Stop() {
 				<-timer.C
 			}
-			n = len(data)
+			n = len(b)
 		case <-timer.C:
 			e = context.DeadlineExceeded
 		}
@@ -281,8 +288,8 @@ func (c *dataChannel) serveConfirm() {
 		}
 		data := make([]byte, 1+8+2)
 		data[0] = 6
-		binary.BigEndian.PutUint64(data[1:], c.id)
-		binary.BigEndian.PutUint16(data[1+8:], uint16(v0))
+		core.ByteOrder.PutUint64(data[1:], c.id)
+		core.ByteOrder.PutUint16(data[1+8:], uint16(v0))
 		select {
 		case <-c.done:
 			return

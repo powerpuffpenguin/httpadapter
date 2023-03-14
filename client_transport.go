@@ -3,7 +3,6 @@ package httpadapter
 import (
 	"bufio"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -196,7 +195,7 @@ CS:
 			if e != nil {
 				break CS
 			}
-			id := binary.BigEndian.Uint64(b)
+			id := core.ByteOrder.Uint64(b)
 			t.Lock()
 			if cc, exists := t.keys[id]; exists {
 				if cc.channel != nil {
@@ -212,8 +211,13 @@ CS:
 			}
 			id := core.ByteOrder.Uint64(b)
 			size := int(core.ByteOrder.Uint16(b[8:]))
-			data := make([]byte, size)
-			_, e = io.ReadFull(r, b)
+			var data []byte
+			if len(b) < size {
+				data = b[:size]
+			} else {
+				data = make([]byte, size)
+			}
+			_, e = io.ReadFull(r, data)
 			if e != nil {
 				break CS
 			}
@@ -236,7 +240,7 @@ CS:
 			if e != nil {
 				break CS
 			}
-			id := binary.BigEndian.Uint64(b)
+			id := core.ByteOrder.Uint64(b)
 			t.Lock()
 			val, exists := t.keys[id]
 			t.Unlock()
@@ -289,7 +293,7 @@ func (t *clientTransport) delete(c *dataChannel) {
 func (t *clientTransport) sendClose(id uint64) {
 	b := make([]byte, 1+8)
 	b[0] = byte(core.CommandClose)
-	binary.BigEndian.PutUint64(b[1:], id)
+	core.ByteOrder.PutUint64(b[1:], id)
 	select {
 	case <-t.done:
 	case t.ch <- b:

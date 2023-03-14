@@ -1,7 +1,6 @@
 package httpadapter_test
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -154,9 +153,9 @@ func TestServer(t *testing.T) {
 			flag = core.Flag
 		}
 		i := copy(b, flag)
-		binary.BigEndian.PutUint16(b[i:], node.Window)
+		core.ByteOrder.PutUint16(b[i:], node.Window)
 		i += 2
-		binary.BigEndian.PutUint16(b[i:], uint16(len(vs)))
+		core.ByteOrder.PutUint16(b[i:], uint16(len(vs)))
 		i += 2
 		copy(b[i:], []byte(vs))
 
@@ -183,7 +182,7 @@ func TestServer(t *testing.T) {
 		}
 		i++
 
-		window := binary.BigEndian.Uint16(b[i:])
+		window := core.ByteOrder.Uint16(b[i:])
 		if !assert.Equal(t, s.Window(), window) {
 			t.FailNow()
 		}
@@ -195,7 +194,7 @@ func TestServer(t *testing.T) {
 			str = node.Code.String()
 		}
 
-		if !assert.Equal(t, uint16(len(str)), binary.BigEndian.Uint16(b[i:])) {
+		if !assert.Equal(t, uint16(len(str)), core.ByteOrder.Uint16(b[i:])) {
 			t.FailNow()
 		}
 

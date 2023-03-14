@@ -25,15 +25,21 @@ func newPipeReader(size int) (pipe *pipeReader) {
 	return
 }
 func (p *pipeReader) Close() {
-	if p.closed == 0 {
-		atomic.SwapInt32(&p.closed, 1)
+	if p.closed == 0 && atomic.SwapInt32(&p.closed, 1) == 0 {
+		p.cond.L.Lock()
+		defer p.cond.L.Unlock()
+
+		if p.wait != 0 {
+			// 存在 等待 goroutine 喚醒 她們
+			p.cond.Broadcast()
+		}
 	}
 }
 func (p *pipeReader) Write(b []byte) (n int, e error) {
 	p.cond.L.Lock()
 	defer p.cond.L.Unlock()
 	// 檢測關閉
-	if p.closed != 0 || atomic.LoadInt32(&p.closed) != 0 {
+	if p.closed != 0 {
 		e = errPipeReaderClosed
 		return
 	}
@@ -54,7 +60,7 @@ func (p *pipeReader) Read(b []byte) (n int, e error) {
 	defer p.cond.L.Unlock()
 	// 檢測關閉
 	if len(b) == 0 {
-		if p.closed != 0 || atomic.LoadInt32(&p.closed) != 0 {
+		if p.closed != 0 {
 			e = io.EOF
 		}
 		return
@@ -63,6 +69,10 @@ func (p *pipeReader) Read(b []byte) (n int, e error) {
 	//  等待可讀數據
 	rw := p.rw
 	for rw.Len() == 0 {
+		if p.closed != 0 {
+			e = io.EOF
+			return
+		}
 		p.wait++
 		p.cond.Wait()
 		p.wait--

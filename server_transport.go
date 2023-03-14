@@ -2,7 +2,6 @@ package httpadapter
 
 import (
 	"bufio"
-	"encoding/binary"
 	"io"
 	"net"
 	"sync"
@@ -106,11 +105,11 @@ TS:
 			if e != nil {
 				break TS
 			}
-			id := binary.BigEndian.Uint64(b)
+			id := core.ByteOrder.Uint64(b)
 
 			data := make([]byte, 1+8+1)
 			data[0] = byte(core.CommandCreate)
-			binary.BigEndian.PutUint64(data[1:], id)
+			core.ByteOrder.PutUint64(data[1:], id)
 
 			t.Lock()
 			_, exists := t.keys[id]
@@ -137,7 +136,7 @@ TS:
 			if e != nil {
 				break TS
 			}
-			id := binary.BigEndian.Uint64(b)
+			id := core.ByteOrder.Uint64(b)
 			t.Lock()
 			if sc, exists := t.keys[id]; exists {
 				sc.Close()
@@ -149,10 +148,15 @@ TS:
 			if e != nil {
 				break TS
 			}
-			id := binary.BigEndian.Uint64(b)
-			size := int(binary.BigEndian.Uint16(b[8:]))
-			data := make([]byte, size)
-			_, e = io.ReadFull(r, b)
+			id := core.ByteOrder.Uint64(b)
+			size := int(core.ByteOrder.Uint16(b[8:]))
+			var data []byte
+			if len(b) < size {
+				data = b[:size]
+			} else {
+				data = make([]byte, size)
+			}
+			_, e = io.ReadFull(r, data)
 			if e != nil {
 				break TS
 			}
@@ -170,12 +174,12 @@ TS:
 			if e != nil {
 				break TS
 			}
-			id := binary.BigEndian.Uint64(b)
+			id := core.ByteOrder.Uint64(b)
 			t.Lock()
 			sc, exists := t.keys[id]
 			t.Unlock()
 			if exists {
-				if sc.Confirm(int(binary.BigEndian.Uint16(b[8:]))) {
+				if sc.Confirm(int(core.ByteOrder.Uint16(b[8:]))) {
 					t.sendClose(id)
 					Logger.Printf(core.CommandConfirm.String()+": channel(%v) overflow\n", id)
 				}
@@ -217,7 +221,7 @@ func (t *serverTransport) delete(c *dataChannel) {
 func (t *serverTransport) sendClose(id uint64) {
 	b := make([]byte, 1+8)
 	b[0] = byte(core.CommandClose)
-	binary.BigEndian.PutUint64(b[1:], id)
+	core.ByteOrder.PutUint64(b[1:], id)
 	select {
 	case <-t.done:
 	case t.ch <- b:
