@@ -154,7 +154,7 @@ CS:
 			val, exists := t.keys[id]
 			if !exists {
 				t.Unlock()
-				ClientLogger.Println(`on command:`, cmd, `, id not exists`, id)
+				Logger.Println(`on command:`, cmd, `, id not exists`, id)
 
 				t.sendClose(id) // 對面 channel id 可能不同步，通知它關閉以試圖修復
 				continue CS
@@ -223,13 +223,13 @@ CS:
 			if exists {
 				if val.channel == nil {
 					t.sendClose(id)
-					ClientLogger.Printf(core.CommandConfirm.String()+": channel(%v) not ready\n", id)
+					Logger.Printf(core.CommandConfirm.String()+": channel(%v) not ready\n", id)
 				} else {
 					val.channel.Pipe(data)
 				}
 			} else {
 				t.sendClose(id)
-				ClientLogger.Printf(core.CommandWrite.String()+": channel(%v) not found\n", id)
+				Logger.Printf(core.CommandWrite.String()+": channel(%v) not found\n", id)
 			}
 		case core.CommandConfirm: // 確認 channel 數據
 			_, e = io.ReadFull(r, b[:8+2])
@@ -243,17 +243,17 @@ CS:
 			if exists {
 				if val.channel == nil {
 					t.sendClose(id)
-					ClientLogger.Printf(core.CommandConfirm.String()+": channel(%v) not ready\n", id)
+					Logger.Printf(core.CommandConfirm.String()+": channel(%v) not ready\n", id)
 				} else if val.channel.Confirm(int(core.ByteOrder.Uint16(b[8:]))) {
 					t.sendClose(id)
-					ClientLogger.Printf(core.CommandConfirm.String()+": channel(%v) overflow\n", id)
+					Logger.Printf(core.CommandConfirm.String()+": channel(%v) overflow\n", id)
 				}
 			} else {
 				t.sendClose(id)
-				ClientLogger.Printf(core.CommandConfirm.String()+": channel(%v) not found\n", id)
+				Logger.Printf(core.CommandConfirm.String()+": channel(%v) not found\n", id)
 			}
 		default:
-			ClientLogger.Println(`Unknow Command:`, cmd.String())
+			Logger.Println(`Unknow Command:`, cmd.String())
 			break CS
 		}
 	}
@@ -266,6 +266,12 @@ CS:
 		}
 	}
 	t.Unlock()
+}
+func (t *clientTransport) getWriter() chan<- []byte {
+	return t.ch
+}
+func (t *clientTransport) Done() <-chan struct{} {
+	return t.done
 }
 func (t *clientTransport) delete(c *dataChannel) {
 	deleted := false
@@ -367,8 +373,7 @@ func (t *clientTransport) Create(ctx context.Context) (c net.Conn, e error) {
 	case val := <-ch:
 		switch val.code {
 		case 0:
-			fmt.Println(val.value)
-			// c = val.value
+			c = val.value
 		case 1:
 			e = errors.New(`code=1 id already exists: ` + strconv.FormatInt(int64(id), 10))
 		case 2:

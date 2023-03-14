@@ -117,7 +117,7 @@ SS:
 				if max := 1 * time.Second; tempDelay > max {
 					tempDelay = max
 				}
-				ServerLogger.Printf("httpadapter: Accept error: %v; retrying in %v\n", err, tempDelay)
+				Logger.Printf("httpadapter: Accept error: %v; retrying in %v\n", err, tempDelay)
 				time.Sleep(tempDelay)
 				continue
 			}

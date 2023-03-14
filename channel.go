@@ -8,9 +8,14 @@ import (
 	"time"
 )
 
-type serverChannel struct {
+type dataTransport interface {
+	delete(c *dataChannel)
+	Done() <-chan struct{}
+	getWriter() chan<- []byte
+}
+type dataChannel struct {
 	id            uint64
-	t             *serverTransport
+	t             dataTransport
 	localAddr     net.Addr
 	remoteAddr    net.Addr
 	closed        int32
@@ -25,13 +30,13 @@ type serverChannel struct {
 	writeDeadline atomic.Value
 }
 
-func newServerChannel(t *serverTransport,
+func newChannel(t dataTransport,
 	id uint64,
 	localAddr, remoteAddr net.Addr,
 	window, remoteWindow int,
-) *serverChannel {
+) *dataChannel {
 	done := make(chan struct{})
-	return &serverChannel{
+	return &dataChannel{
 		id:           id,
 		t:            t,
 		localAddr:    localAddr,
@@ -44,7 +49,7 @@ func newServerChannel(t *serverTransport,
 		sendConfirm:  make(chan int, 10),
 	}
 }
-func (c *serverChannel) Close() (e error) {
+func (c *dataChannel) Close() (e error) {
 	if c.closed == 0 && atomic.SwapInt32(&c.closed, 1) == 0 {
 		close(c.done)
 		c.pipe.Close()
@@ -53,14 +58,14 @@ func (c *serverChannel) Close() (e error) {
 	}
 	return
 }
-func (c *serverChannel) LocalAddr() net.Addr {
+func (c *dataChannel) LocalAddr() net.Addr {
 	return c.localAddr
 }
 
-func (c *serverChannel) RemoteAddr() net.Addr {
+func (c *dataChannel) RemoteAddr() net.Addr {
 	return c.remoteAddr
 }
-func (c *serverChannel) SetDeadline(t time.Time) (e error) {
+func (c *dataChannel) SetDeadline(t time.Time) (e error) {
 	if c.closed == 0 && atomic.LoadInt32(&c.closed) == 0 {
 		c.deadline.Store(t)
 	} else {
@@ -69,7 +74,7 @@ func (c *serverChannel) SetDeadline(t time.Time) (e error) {
 	return
 }
 
-func (c *serverChannel) SetReadDeadline(t time.Time) (e error) {
+func (c *dataChannel) SetReadDeadline(t time.Time) (e error) {
 	if c.closed == 0 && atomic.LoadInt32(&c.closed) == 0 {
 		c.readDeadline.Store(t)
 	} else {
@@ -78,7 +83,7 @@ func (c *serverChannel) SetReadDeadline(t time.Time) (e error) {
 	return
 }
 
-func (c *serverChannel) SetWriteDeadline(t time.Time) (e error) {
+func (c *dataChannel) SetWriteDeadline(t time.Time) (e error) {
 	if c.closed == 0 && atomic.LoadInt32(&c.closed) == 0 {
 		c.writeDeadline.Store(t)
 	} else {
@@ -86,7 +91,7 @@ func (c *serverChannel) SetWriteDeadline(t time.Time) (e error) {
 	}
 	return
 }
-func (c *serverChannel) Serve() {
+func (c *dataChannel) Serve() {
 	defer func() {
 		// 關閉 channel
 		if c.Close() == nil {
@@ -95,6 +100,7 @@ func (c *serverChannel) Serve() {
 		}
 	}()
 	go c.serveConfirm()
+
 	var (
 		b         []byte
 		exit      bool
@@ -102,6 +108,8 @@ func (c *serverChannel) Serve() {
 		writed    = 0 // 已經寫入的數據
 		available int // 可寫數據
 		size      int
+		done      = c.t.Done()
+		ch        = c.t.getWriter()
 	)
 	for {
 		b, confirm, exit = c.choose(b)
@@ -109,7 +117,7 @@ func (c *serverChannel) Serve() {
 			break
 		} else if confirm > 0 {
 			if confirm > writed {
-				ServerLogger.Printf("channel(%v) confirm(%v) > writed(%v)\n", c.id, confirm, writed)
+				Logger.Printf("channel(%v) confirm(%v) > writed(%v)\n", c.id, confirm, writed)
 				break
 			} else {
 				writed -= confirm
@@ -125,21 +133,22 @@ func (c *serverChannel) Serve() {
 				size = available
 			}
 			select {
-			case <-c.t.done:
+			case <-done:
 				return
 			case <-c.done:
 				return
-			case c.t.ch <- b[:size]:
+			case ch <- b[:size]:
 				writed += size
 				b = b[size:]
 			}
 		}
 	}
 }
-func (c *serverChannel) choose(b []byte) (data []byte, confirm int, exit bool) {
+func (c *dataChannel) choose(b []byte) (data []byte, confirm int, exit bool) {
+	done := c.t.Done()
 	if len(b) == 0 {
 		select {
-		case <-c.t.done:
+		case <-done:
 			exit = true
 		case <-c.done:
 			exit = true
@@ -149,7 +158,7 @@ func (c *serverChannel) choose(b []byte) (data []byte, confirm int, exit bool) {
 	} else {
 		data = b
 		select {
-		case <-c.t.done:
+		case <-done:
 			exit = true
 		case <-c.done:
 			exit = true
@@ -159,7 +168,7 @@ func (c *serverChannel) choose(b []byte) (data []byte, confirm int, exit bool) {
 	}
 	return
 }
-func (c *serverChannel) Write(b []byte) (n int, e error) {
+func (c *dataChannel) Write(b []byte) (n int, e error) {
 	var deadline time.Time
 	v := c.deadline.Load()
 	if v != nil {
@@ -187,7 +196,7 @@ func (c *serverChannel) Write(b []byte) (n int, e error) {
 	copy(data, b)
 	if timer == nil {
 		select {
-		case <-c.t.done:
+		case <-c.t.Done():
 			e = ErrTCPClosed
 		case <-c.done:
 			e = ErrChannelClosed
@@ -196,7 +205,7 @@ func (c *serverChannel) Write(b []byte) (n int, e error) {
 		}
 	} else {
 		select {
-		case <-c.t.done:
+		case <-c.t.Done():
 			if !timer.Stop() {
 				<-timer.C
 			}
@@ -217,7 +226,7 @@ func (c *serverChannel) Write(b []byte) (n int, e error) {
 	}
 	return
 }
-func (c *serverChannel) Confirm(val int) (overflow bool) {
+func (c *dataChannel) Confirm(val int) (overflow bool) {
 	select {
 	case <-c.done:
 		return
@@ -241,16 +250,18 @@ func (c *serverChannel) Confirm(val int) (overflow bool) {
 		}
 	}
 }
-func (c *serverChannel) serveConfirm() {
+func (c *dataChannel) serveConfirm() {
 	var (
 		v0, v1 int
 		window = c.remoteWindow
+		done   = c.t.Done()
+		ch     = c.t.getWriter()
 	)
 	for {
 		select {
 		case <-c.done:
 			return
-		case <-c.t.done:
+		case <-done:
 			return
 		case v0 = <-c.sendConfirm:
 		}
@@ -260,7 +271,7 @@ func (c *serverChannel) serveConfirm() {
 			select {
 			case <-c.done:
 				return
-			case <-c.t.done:
+			case <-done:
 				return
 			case v1 = <-c.sendConfirm:
 				v0 += v1
@@ -275,24 +286,24 @@ func (c *serverChannel) serveConfirm() {
 		select {
 		case <-c.done:
 			return
-		case <-c.t.done:
+		case <-done:
 			return
-		case c.t.ch <- data:
+		case ch <- data:
 		}
 	}
 }
-func (c *serverChannel) Read(b []byte) (n int, e error) {
+func (c *dataChannel) Read(b []byte) (n int, e error) {
 	n, e = c.pipe.Read(b)
 	if e == nil && n != 0 {
 		select {
 		case c.sendConfirm <- n:
 		case <-c.done:
-		case <-c.t.done:
+		case <-c.t.Done():
 		}
 	}
 	return
 }
-func (c *serverChannel) Pipe(b []byte) {
+func (c *dataChannel) Pipe(b []byte) {
 	_, e := c.pipe.Write(b)
 	if e != nil { // pipe 錯誤關閉 channel
 		c.Close()

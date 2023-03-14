@@ -19,7 +19,7 @@ type serverTransport struct {
 	done                 chan struct{}
 	closed               int32
 	sync.Mutex
-	keys map[uint64]*serverChannel
+	keys map[uint64]*dataChannel
 	ch   chan []byte
 }
 
@@ -33,7 +33,7 @@ func newServerTransport(c net.Conn,
 		remoteWindow: remoteWindow,
 		handler:      handler,
 		done:         make(chan struct{}),
-		keys:         make(map[uint64]*serverChannel),
+		keys:         make(map[uint64]*dataChannel),
 		ch:           make(chan []byte, 100),
 	}
 }
@@ -119,7 +119,7 @@ TS:
 			} else if channels > 0 && len(t.keys) >= channels {
 				data[1+8] = 2
 			} else {
-				val := newServerChannel(t, id,
+				val := newChannel(t, id,
 					localAddr, remoteAddr,
 					t.window, t.remoteWindow,
 				)
@@ -163,7 +163,7 @@ TS:
 				sc.Pipe(data)
 			} else {
 				t.sendClose(id)
-				ServerLogger.Printf(core.CommandWrite.String()+": channel(%v) not found\n", id)
+				Logger.Printf(core.CommandWrite.String()+": channel(%v) not found\n", id)
 			}
 		case core.CommandConfirm: // 確認 channel 數據
 			_, e = io.ReadFull(r, b[:8+2])
@@ -177,14 +177,14 @@ TS:
 			if exists {
 				if sc.Confirm(int(binary.BigEndian.Uint16(b[8:]))) {
 					t.sendClose(id)
-					ServerLogger.Printf(core.CommandConfirm.String()+": channel(%v) overflow\n", id)
+					Logger.Printf(core.CommandConfirm.String()+": channel(%v) overflow\n", id)
 				}
 			} else {
 				t.sendClose(id)
-				ServerLogger.Printf(core.CommandConfirm.String()+": channel(%v) not found\n", id)
+				Logger.Printf(core.CommandConfirm.String()+": channel(%v) not found\n", id)
 			}
 		default:
-			ServerLogger.Println(`Unknow Command:`, cmd.String())
+			Logger.Println(`Unknow Command:`, cmd.String())
 			break TS
 		}
 	}
@@ -195,8 +195,13 @@ TS:
 	}
 	t.Unlock()
 }
-
-func (t *serverTransport) delete(c *serverChannel) {
+func (t *serverTransport) getWriter() chan<- []byte {
+	return t.ch
+}
+func (t *serverTransport) Done() <-chan struct{} {
+	return t.done
+}
+func (t *serverTransport) delete(c *dataChannel) {
 	deleted := false
 	t.Lock()
 	if t.keys[c.id] == c {
