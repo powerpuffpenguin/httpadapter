@@ -1,8 +1,9 @@
 package httpadapter_test
 
 import (
+	"fmt"
 	"io"
-	"net"
+	"net/http"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 )
 
 func ServerEcho(duration time.Duration) httpadapter.ServerOption {
-	return httpadapter.ServerHandler(httpadapter.HandleFunc(func(c net.Conn) {
+	return httpadapter.ServerHandler(httpadapter.HandleFunc(func(c httpadapter.Conn) {
 		defer c.Close()
 		b := make([]byte, 10)
 		for {
@@ -97,4 +98,25 @@ func TestClientSleep(t *testing.T) {
 		c.Close()
 	}
 
+}
+
+func TestClientHttp(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc(`/version`, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(`Content-Type`, `text/plain; charset=utf-8`)
+		w.Write([]byte(fmt.Sprintf("version=%v\nprotocol=%v\n",
+			core.Version,
+			core.ProtocolVersion,
+		)))
+	})
+
+	s := newServer(t,
+		httpadapter.ServerWindow(4),
+		httpadapter.ServerHTTP(mux),
+	)
+	defer s.CloseAndWait()
+
+	client := httpadapter.NewClient(Addr)
+
+	client.Dial()
 }

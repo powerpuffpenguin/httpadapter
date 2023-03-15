@@ -9,6 +9,10 @@ import (
 	"github.com/powerpuffpenguin/httpadapter/core"
 )
 
+type Conn interface {
+	net.Conn
+	Context() context.Context
+}
 type dataTransport interface {
 	delete(c *dataChannel)
 	Done() <-chan struct{}
@@ -20,7 +24,7 @@ type dataChannel struct {
 	localAddr     net.Addr
 	remoteAddr    net.Addr
 	closed        int32
-	done          chan struct{}
+	ctx           *channelContext
 	write         chan []byte
 	pipe          *pipeReader
 	remoteWindow  int
@@ -36,13 +40,12 @@ func newChannel(t dataTransport,
 	localAddr, remoteAddr net.Addr,
 	window, remoteWindow int,
 ) *dataChannel {
-	done := make(chan struct{})
 	return &dataChannel{
 		id:           id,
 		t:            t,
 		localAddr:    localAddr,
 		remoteAddr:   remoteAddr,
-		done:         done,
+		ctx:          newChannelContext(),
 		write:        make(chan []byte),
 		pipe:         newPipeReader(window),
 		remoteWindow: remoteWindow,
@@ -50,9 +53,33 @@ func newChannel(t dataTransport,
 		sendConfirm:  make(chan int, 10),
 	}
 }
+
+type channelContext struct {
+	context.Context
+	cancel context.CancelFunc
+}
+
+func newChannelContext() *channelContext {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &channelContext{
+		Context: ctx,
+		cancel:  cancel,
+	}
+}
+func (c *channelContext) Err() (e error) {
+	e = c.Context.Err()
+	if e != nil {
+		e = ErrChannelClosed
+	}
+	return
+}
+
+func (c *dataChannel) Context() context.Context {
+	return c.ctx
+}
 func (c *dataChannel) Close() (e error) {
 	if c.closed == 0 && atomic.SwapInt32(&c.closed, 1) == 0 {
-		close(c.done)
+		c.ctx.cancel()
 		c.pipe.Close()
 	} else {
 		e = ErrChannelClosed
@@ -141,7 +168,7 @@ func (c *dataChannel) Serve() {
 			select {
 			case <-done:
 				return
-			case <-c.done:
+			case <-c.ctx.Done():
 				return
 			case ch <- data:
 				writed += size
@@ -157,7 +184,7 @@ func (c *dataChannel) choose(b []byte) (data []byte, confirm int, exit bool) {
 		select {
 		case <-done:
 			exit = true
-		case <-c.done:
+		case <-c.ctx.Done():
 			exit = true
 		case data = <-c.write:
 		case confirm = <-c.confirm:
@@ -167,7 +194,7 @@ func (c *dataChannel) choose(b []byte) (data []byte, confirm int, exit bool) {
 		select {
 		case <-done:
 			exit = true
-		case <-c.done:
+		case <-c.ctx.Done():
 			exit = true
 		case confirm = <-c.confirm:
 		default:
@@ -205,7 +232,7 @@ func (c *dataChannel) Write(b []byte) (n int, e error) {
 		select {
 		case <-c.t.Done():
 			e = ErrTCPClosed
-		case <-c.done:
+		case <-c.ctx.Done():
 			e = ErrChannelClosed
 		case c.write <- data:
 			n = len(b)
@@ -217,7 +244,7 @@ func (c *dataChannel) Write(b []byte) (n int, e error) {
 				<-timer.C
 			}
 			e = ErrTCPClosed
-		case <-c.done:
+		case <-c.ctx.Done():
 			if !timer.Stop() {
 				<-timer.C
 			}
@@ -235,7 +262,7 @@ func (c *dataChannel) Write(b []byte) (n int, e error) {
 }
 func (c *dataChannel) Confirm(val int) (overflow bool) {
 	select {
-	case <-c.done:
+	case <-c.ctx.Done():
 		return
 	case c.confirm <- val:
 		return
@@ -244,7 +271,7 @@ func (c *dataChannel) Confirm(val int) (overflow bool) {
 
 	for {
 		select {
-		case <-c.done:
+		case <-c.ctx.Done():
 			return
 		case c.confirm <- val:
 			return
@@ -266,7 +293,7 @@ func (c *dataChannel) serveConfirm() {
 	)
 	for {
 		select {
-		case <-c.done:
+		case <-c.ctx.Done():
 			return
 		case <-done:
 			return
@@ -276,7 +303,7 @@ func (c *dataChannel) serveConfirm() {
 	CSF:
 		for v0 < window {
 			select {
-			case <-c.done:
+			case <-c.ctx.Done():
 				return
 			case <-done:
 				return
@@ -291,7 +318,7 @@ func (c *dataChannel) serveConfirm() {
 		core.ByteOrder.PutUint64(data[1:], c.id)
 		core.ByteOrder.PutUint16(data[1+8:], uint16(v0))
 		select {
-		case <-c.done:
+		case <-c.ctx.Done():
 			return
 		case <-done:
 			return
@@ -304,7 +331,7 @@ func (c *dataChannel) Read(b []byte) (n int, e error) {
 	if e == nil && n != 0 {
 		select {
 		case c.sendConfirm <- n:
-		case <-c.done:
+		case <-c.ctx.Done():
 		case <-c.t.Done():
 		}
 	}

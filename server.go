@@ -209,7 +209,7 @@ func (s *Server) serve(l *httpListner, rw net.Conn) {
 			rw.Close()
 			return
 		}
-		time.Sleep(time.Second)
+		time.Sleep(time.Second * 5)
 		rw.Close()
 		return
 	}
