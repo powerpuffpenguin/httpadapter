@@ -119,4 +119,5 @@ func TestClientHttp(t *testing.T) {
 	client := httpadapter.NewClient(Addr)
 
 	client.Dial()
+
 }

@@ -4,7 +4,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/powerpuffpenguin/httpadapter/option"
+	"github.com/powerpuffpenguin/easygo/option"
 )
 
 var defaultClientOptions = clientOptions{
