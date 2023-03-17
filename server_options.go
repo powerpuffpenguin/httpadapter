@@ -15,6 +15,7 @@ var defaultServerOptions = serverOptions{
 	writeBuffer:    4096,
 	channels:       0,
 	channelHandler: defaultHandler,
+	client:         http.DefaultClient,
 }
 
 type serverOptions struct {
@@ -27,6 +28,7 @@ type serverOptions struct {
 	channels       int
 	channelHandler Handler
 	ping           time.Duration
+	client         *http.Client
 }
 type Backend interface {
 	Dial() (net.Conn, error)
@@ -53,7 +55,11 @@ func ServerHTTP(handler http.Handler) ServerOption {
 // 設置如何處理 channel
 func ServerHandler(handler Handler) ServerOption {
 	return option.New(func(opts *serverOptions) {
-		opts.channelHandler = handler
+		if handler == nil {
+			opts.channelHandler = defaultHandler
+		} else {
+			opts.channelHandler = handler
+		}
 	})
 }
 

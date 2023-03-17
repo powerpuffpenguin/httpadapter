@@ -14,24 +14,11 @@ import (
 	"github.com/powerpuffpenguin/httpadapter/core"
 )
 
-// 請求一個一元方法
-func (c *Client) Unary(ctx context.Context, req *MessageRequest) (resp *MessageResponse, e error) {
-	var bodylen uint64
-	switch req.Method {
-	case http.MethodPost, http.MethodPut, http.MethodPatch:
-		if req.BodyLen != 0 && req.Body != nil {
-			bodylen = req.BodyLen
-		}
-	}
-	if bodylen > math.MaxInt64 {
-		e = errors.New(`body length too long`)
-		return
-	}
-
+// 請求代理訪問一個 websocket
+func (c *Client) Websocket(ctx context.Context, url string, header http.Header) (ws *Websocket, resp *MessageResponse, e error) {
 	md := &core.ClientMetadata{
-		URL:    req.URL,
-		Method: req.Method,
-		Header: req.Header,
+		URL:    url,
+		Header: header,
 	}
 	w := bytes.NewBuffer(make([]byte, 10, 256))
 	e = json.NewEncoder(w).Encode(md)
@@ -45,7 +32,7 @@ func (c *Client) Unary(ctx context.Context, req *MessageRequest) (resp *MessageR
 		return
 	}
 	core.ByteOrder.PutUint16(b, uint16(metalen))
-	core.ByteOrder.PutUint64(b[2:], bodylen)
+	core.ByteOrder.PutUint64(b[2:], 0)
 	conn, e := c.DialContext(ctx)
 	if e != nil {
 		return
@@ -60,15 +47,6 @@ func (c *Client) Unary(ctx context.Context, req *MessageRequest) (resp *MessageR
 			resp.Second = e
 			ch <- resp
 			return
-		}
-		// write body
-		if bodylen > 0 {
-			_, e = io.Copy(conn, req.Body)
-			if e != nil {
-				resp.Second = e
-				ch <- resp
-				return
-			}
 		}
 
 		// read header
@@ -128,6 +106,21 @@ func (c *Client) Unary(ctx context.Context, req *MessageRequest) (resp *MessageR
 			header[textproto.CanonicalMIMEHeaderKey(k)] = v
 		}
 		resp.First.Header = header
+		if md.Status != http.StatusSwitchingProtocols {
+			b, e := io.ReadAll(io.LimitReader(resp.First.Body, 256))
+			if e == nil {
+				if len(b) == 0 {
+					resp.Second = errors.New(`switching protocols error`)
+				} else {
+					resp.Second = errors.New(string(b))
+				}
+				ch <- resp
+			} else {
+				resp.Second = e
+				ch <- resp
+			}
+			return
+		}
 		ch <- resp
 	}()
 	select {
@@ -136,46 +129,11 @@ func (c *Client) Unary(ctx context.Context, req *MessageRequest) (resp *MessageR
 		e = ctx.Err()
 	case obj := <-ch:
 		resp, e = &obj.First, obj.Second
-		if e != nil || resp.Body == nil {
+		if e != nil {
 			conn.Close()
+			return
 		}
+		ws = &Websocket{c: conn}
 	}
 	return
-}
-
-type readCloser struct {
-	io.Reader
-	io.Closer
-}
-type nilReadCloser struct{}
-
-func (nilReadCloser) Close() error {
-	return nil
-}
-func (nilReadCloser) Read(p []byte) (int, error) {
-	return 0, io.EOF
-}
-
-type MessageRequest struct {
-	// 請求的 http url
-	URL string
-	// 請求 方法
-	Method string
-	// 添加的 header
-	Header http.Header
-	// body 內容
-	Body io.Reader
-	// body 大小
-	BodyLen uint64
-}
-
-type MessageResponse struct {
-	// http 響應碼
-	Status int
-	// http 響應 heaer
-	Header http.Header
-	// 響應 body，調用者需要關閉它，無論是否有返回 body 它都不爲 nil
-	Body io.ReadCloser
-	// 響應 body 內容長度
-	BodyLen uint64
 }

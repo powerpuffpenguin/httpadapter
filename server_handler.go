@@ -3,7 +3,6 @@ package httpadapter
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -13,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/powerpuffpenguin/httpadapter/core"
 )
 
@@ -32,12 +32,12 @@ func (h handlerFunc) ServeChannel(c Conn) {
 	h.f(c)
 }
 
-var defaultHandler = channelHandler{}
 var channelBytes = sync.Pool{
 	New: func() any {
 		return make([]byte, 1024)
 	},
 }
+var defaultHandler channelHandler
 
 type channelHandler struct {
 }
@@ -95,20 +95,13 @@ func (f *forwardConn) getBytes(end int) (buf *bytes.Buffer) {
 	return
 }
 func (f *forwardConn) Serve() {
-	next := f.readFirst()
-	if !next {
-		return
-	}
-	fmt.Println("websocket")
-}
-func (f *forwardConn) readFirst() (next bool) {
-	b := f.getBuffer(6)
+	b := f.getBuffer(10)
 	_, e := io.ReadFull(f.c, b)
 	if e != nil {
 		return
 	}
 	metalen := int(core.ByteOrder.Uint16(b))
-	bodylen := int(core.ByteOrder.Uint32(b[2:]))
+	bodylen := core.ByteOrder.Uint64(b[2:])
 
 	b = f.getBuffer(metalen)
 	_, e = io.ReadFull(f.c, b)
@@ -121,30 +114,186 @@ func (f *forwardConn) readFirst() (next bool) {
 		f.sendText(http.StatusBadRequest, err.Error())
 		return
 	}
+	if bodylen > math.MaxInt64 {
+		f.sendText(http.StatusBadRequest, "bodylen too large")
+		return
+	}
 	// 驗證 url
-	_, err = url.Parse(metadata.URL)
+	uri, err := url.Parse(metadata.URL)
 	if err != nil {
 		f.sendText(http.StatusBadRequest, err.Error())
 		return
 	}
-	// 驗證
-	switch metadata.Method {
-	case http.MethodGet,
-		http.MethodPost,
-		http.MethodHead,
-		http.MethodPut,
-		http.MethodPatch,
-		http.MethodDelete:
-		f.unary(&metadata, bodylen)
+	switch uri.Scheme {
+	case "ws", "wss":
+		f.websocket(&metadata, int64(bodylen))
+	case "http", "https":
+		switch metadata.Method {
+		case http.MethodGet,
+			http.MethodPost,
+			http.MethodHead,
+			http.MethodPut,
+			http.MethodPatch,
+			http.MethodDelete:
+			f.unary(&metadata, int64(bodylen))
+		default:
+			f.sendText(http.StatusBadRequest, `not support method: `+metadata.Method)
+		}
 	default:
-		f.sendText(http.StatusBadRequest, `not support method`)
+		f.sendText(http.StatusBadRequest, `not support scheme: `+uri.Scheme)
+	}
+}
+func (f *forwardConn) websocket(md *core.ClientMetadata, bodylen int64) {
+	if bodylen != 0 {
+		f.sendText(http.StatusBadRequest, `bodylen invalid`)
+		return
+	}
+	ctx := f.c.Context()
+	ws, _, e := websocket.DefaultDialer.DialContext(ctx, md.URL, md.Header)
+	if e != nil {
+		f.sendText(http.StatusBadGateway, e.Error())
+		return
+	}
+	defer ws.Close()
+	e = f.sendOk(http.StatusSwitchingProtocols, nil, nil, 0)
+	if e != nil {
+		return
+	}
+
+	go func() {
+		var (
+			b      = make([]byte, 1024*32)
+			closed bool
+			e      error
+		)
+		for {
+			closed, e = f.readWS(ws, b)
+			if e != nil {
+				if closed {
+					f.c.Close()
+					time.Sleep(time.Second)
+					ws.Close()
+				} else {
+					ws.Close()
+					if f.c.Context().Err() == nil {
+						time.Sleep(time.Second)
+						f.c.Close()
+					}
+				}
+				break
+			}
+		}
+	}()
+	var (
+		b      = f.getBuffer(4)
+		closed bool
+	)
+	for {
+		closed, e = f.writeWS(ws, b)
+		if e != nil {
+			if closed {
+				f.c.Close()
+				time.Sleep(time.Second)
+				ws.Close()
+			} else {
+				ws.Close()
+				if f.c.Context().Err() == nil {
+					time.Sleep(time.Second)
+					f.c.Close()
+				}
+			}
+			break
+		}
+	}
+}
+func (f *forwardConn) readWS(ws *websocket.Conn, b []byte) (closed bool, e error) {
+	t, r, e := ws.NextReader()
+	if e != nil {
+		return
+	}
+	n, e := r.Read(b[4:])
+	if e != nil {
+		if e == io.EOF {
+			e = nil
+		}
+		return
+	}
+	b[0] = byte(t)
+	b[1] = 0
+	core.ByteOrder.PutUint16(b[2:], uint16(n))
+	_, e = f.c.Write(b[:4+n])
+	if e != nil {
+		closed = true
+		return
+	}
+	for {
+		n, e = r.Read(b[3:])
+		if e != nil {
+			if e == io.EOF {
+				b[0] = 1
+				core.ByteOrder.PutUint16(b[1:], 0)
+				_, e = f.c.Write(b[:3])
+				if e != nil {
+					closed = true
+					return
+				}
+			}
+			break
+		}
+		b[0] = 0
+		core.ByteOrder.PutUint16(b[1:], uint16(n))
+		_, e = f.c.Write(b[:3+n])
+		if e != nil {
+			closed = true
+			return
+		}
 	}
 	return
 }
-func (f *forwardConn) unary(md *core.ClientMetadata, bodylen int) {
+func (f *forwardConn) writeWS(ws *websocket.Conn, b []byte) (closed bool, e error) {
+	_, e = io.ReadFull(f.c, b[:4])
+	if e != nil {
+		closed = true
+		return
+	}
+	var (
+		t   = b[0]
+		end = b[1] == 1
+		l   = core.ByteOrder.Uint16(b[2:])
+	)
+	w, e := ws.NextWriter(int(t))
+	if e != nil {
+		return
+	}
+	defer w.Close()
+	if l != 0 {
+		_, e = io.Copy(w, io.LimitReader(f.c, int64(l)))
+		if e != nil {
+			return
+		}
+	}
+	for !end {
+		_, e = io.ReadFull(f.c, b[:3])
+		if e != nil {
+			closed = true
+			return
+		}
+		end = b[0] == 1
+		l = core.ByteOrder.Uint16(b[2:])
+		if l != 0 {
+			_, e = io.Copy(w, io.LimitReader(f.c, int64(l)))
+			if e != nil {
+				return
+			}
+		}
+	}
+	e = w.Close()
+	return
+}
+func (f *forwardConn) unary(md *core.ClientMetadata, bodylen int64) {
 	// 創建 request
 	ctx := f.c.Context()
-	req, e := http.NewRequestWithContext(ctx, md.Method, md.URL, io.LimitReader(f.c, int64(bodylen)))
+	req, e := http.NewRequestWithContext(ctx, md.Method, md.URL, io.LimitReader(f.c, bodylen))
 	if e != nil {
 		f.sendText(http.StatusBadRequest, e.Error())
 		return
@@ -157,6 +306,11 @@ func (f *forwardConn) unary(md *core.ClientMetadata, bodylen int) {
 			continue
 		}
 		req.Header[k] = v
+	}
+	if bodylen > 0 {
+		if req.Header.Get(`Content-Type`) == `` {
+			req.Header.Set(`Content-Type`, `application/x-www-form-urlencoded`)
+		}
 	}
 	// 發送請求
 	resp, e := http.DefaultClient.Do(req)
@@ -176,16 +330,17 @@ func (f *forwardConn) unary(md *core.ClientMetadata, bodylen int) {
 	if e != nil {
 		f.sendText(http.StatusBadGateway, `content-length error: `+e.Error())
 		return
-	} else if length > math.MaxUint32 || length > math.MaxInt {
+	} else if length > math.MaxInt64 {
 		f.sendText(http.StatusBadGateway, `content-length too large: `+strconv.FormatUint(length, 10))
 		return
 	}
 
 	// 返回數據
-	f.sendResponse(resp.StatusCode, resp.Header, resp.Body, uint32(length))
+	f.sendResponse(resp.StatusCode, resp.Header, resp.Body, uint64(length))
 }
-func (f *forwardConn) sendResponse(status int, header http.Header, body io.Reader, bodylen uint32) {
-	if f.c.Context().Err() != nil {
+func (f *forwardConn) sendOk(status int, header http.Header, body io.Reader, bodylen uint64) (e error) {
+	e = f.c.Context().Err()
+	if e != nil {
 		return
 	}
 	md := core.ServerMetadata{
@@ -193,22 +348,29 @@ func (f *forwardConn) sendResponse(status int, header http.Header, body io.Reade
 		Header: header,
 	}
 
-	w := f.getBytes(6)
+	w := f.getBytes(10)
 
-	e := json.NewEncoder(w).Encode(md)
+	e = json.NewEncoder(w).Encode(md)
 	if e != nil {
 		Logger.Println(e)
 		return
 	}
-	metalen := w.Len() - 6
+	metalen := w.Len() - 10
 	data := w.Bytes()
 	core.ByteOrder.PutUint16(data, uint16(metalen))
-	core.ByteOrder.PutUint32(data[2:], uint32(bodylen))
+	core.ByteOrder.PutUint64(data[2:], uint64(bodylen))
 	_, e = f.c.Write(data)
 	if e != nil {
 		return
 	}
-	_, e = io.Copy(f.c, body)
+	if bodylen != 0 {
+		_, e = io.Copy(f.c, body)
+	}
+	return
+}
+
+func (f *forwardConn) sendResponse(status int, header http.Header, body io.Reader, bodylen uint64) {
+	e := f.sendOk(status, header, body, bodylen)
 	if e != nil {
 		return
 	}
@@ -224,14 +386,14 @@ func (f *forwardConn) sendText(status int, body string) {
 		Header: make(http.Header),
 	}
 	md.Header.Set(`Content-Type`, `text/plain; charset=utf-8`)
-	w := f.getBytes(6)
+	w := f.getBytes(10)
 
 	e := json.NewEncoder(w).Encode(md)
 	if e != nil {
 		Logger.Println(e)
 		return
 	}
-	metalen := w.Len() - 6
+	metalen := w.Len() - 10
 
 	_, e = w.WriteString(body)
 	if e != nil {
@@ -240,12 +402,12 @@ func (f *forwardConn) sendText(status int, body string) {
 	}
 	data := w.Bytes()
 	core.ByteOrder.PutUint16(data, uint16(metalen))
-	core.ByteOrder.PutUint32(data[2:], uint32(len(body)))
-
+	core.ByteOrder.PutUint64(data[2:], uint64(len(body)))
 	_, e = f.c.Write(data)
 	if e != nil {
 		return
 	}
+
 	f.delayWait()
 }
 

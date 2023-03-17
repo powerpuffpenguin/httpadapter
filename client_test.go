@@ -1,11 +1,14 @@
 package httpadapter_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -43,6 +46,7 @@ func TestClient(t *testing.T) {
 	defer s.CloseAndWait()
 
 	client := httpadapter.NewClient(Addr)
+	defer client.Close()
 
 	for i := 0; i < 10; i++ {
 		c, e := client.Dial()
@@ -76,6 +80,7 @@ func TestClientSleep(t *testing.T) {
 	defer s.CloseAndWait()
 
 	client := httpadapter.NewClient(Addr)
+	defer client.Close()
 
 	for i := 0; i < 10; i++ {
 		c, e := client.Dial()
@@ -129,9 +134,10 @@ func TestClientHttp(t *testing.T) {
 	)
 	defer s.CloseAndWait()
 	client := httpadapter.NewClient(Addr)
+	defer client.Close()
 
 	// bad gateway
-	resp, e := client.Unary(context.Background(), &httpadapter.UnaryRequest{
+	resp, e := client.Unary(context.Background(), &httpadapter.MessageRequest{
 		URL:    `abc`,
 		Method: http.MethodPost,
 	})
@@ -139,12 +145,12 @@ func TestClientHttp(t *testing.T) {
 		t.FailNow()
 	}
 	resp.Body.Close()
-	if !assert.Equal(t, http.StatusBadGateway, resp.Status) {
+	if !assert.Equal(t, http.StatusBadRequest, resp.Status) {
 		t.FailNow()
 	}
 
 	// 404
-	resp, e = client.Unary(context.Background(), &httpadapter.UnaryRequest{
+	resp, e = client.Unary(context.Background(), &httpadapter.MessageRequest{
 		URL:    BaseURL + `/404`,
 		Method: http.MethodGet,
 	})
@@ -157,7 +163,7 @@ func TestClientHttp(t *testing.T) {
 	}
 
 	// text/plain
-	resp, e = client.Unary(context.Background(), &httpadapter.UnaryRequest{
+	resp, e = client.Unary(context.Background(), &httpadapter.MessageRequest{
 		URL:    BaseURL + `/version`,
 		Method: http.MethodGet,
 	})
@@ -184,7 +190,7 @@ func TestClientHttp(t *testing.T) {
 	}
 
 	// json
-	resp, e = client.Unary(context.Background(), &httpadapter.UnaryRequest{
+	resp, e = client.Unary(context.Background(), &httpadapter.MessageRequest{
 		URL:    BaseURL + `/version`,
 		Method: http.MethodGet,
 		Header: http.Header{
@@ -211,4 +217,106 @@ func TestClientHttp(t *testing.T) {
 	)) {
 		t.FailNow()
 	}
+}
+func checkClientHttpBody(t *testing.T, resp *httpadapter.MessageResponse, e error, val string) {
+	if !assert.Nil(t, e) {
+		t.FailNow()
+	}
+	defer resp.Body.Close()
+	if !assert.Equal(t, http.StatusOK, resp.Status) {
+		t.FailNow()
+	}
+
+	b, e := io.ReadAll(resp.Body)
+	if !assert.Nil(t, e) {
+		t.FailNow()
+	}
+	if !assert.Equal(t, val, string(b)) {
+		t.FailNow()
+	}
+
+}
+func TestClientHttpBody(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc(`/add`, func(w http.ResponseWriter, r *http.Request) {
+		var val int
+		switch r.Method {
+		case http.MethodGet:
+			query := r.URL.Query()
+			v0, _ := strconv.Atoi(query.Get(`v0`))
+			v1, _ := strconv.Atoi(query.Get(`v1`))
+			val = v1 + v0
+		case http.MethodPost, http.MethodPatch, http.MethodPut:
+			if strings.HasPrefix(r.Header.Get(`Content-Type`), `application/json`) {
+				var obj struct {
+					V0 int `json:"v0"`
+					V1 int `json:"v1"`
+				}
+				e := json.NewDecoder(r.Body).Decode(&obj)
+				if e != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					w.Header().Set(`Content-Type`, `text/plain; charset=utf-8`)
+					w.Write([]byte(e.Error()))
+					return
+				}
+				val = obj.V0 + obj.V1
+			} else {
+				e := r.ParseForm()
+				if e != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					w.Header().Set(`Content-Type`, `text/plain; charset=utf-8`)
+					w.Write([]byte(e.Error()))
+					return
+				}
+				v0, _ := strconv.Atoi(r.PostForm.Get(`v0`))
+				v1, _ := strconv.Atoi(r.PostForm.Get(`v1`))
+				val = v1 + v0
+			}
+		}
+		w.Header().Set(`Content-Type`, `text/plain; charset=utf-8`)
+		w.Write([]byte(fmt.Sprint(val)))
+	})
+
+	s := newServer(t,
+		httpadapter.ServerWindow(4),
+		httpadapter.ServerHTTP(mux),
+	)
+	defer s.CloseAndWait()
+
+	client := httpadapter.NewClient(Addr)
+	defer client.Close()
+
+	resp, e := client.Unary(context.Background(), &httpadapter.MessageRequest{
+		URL:    BaseURL + `/add?v0=1&v1=2`,
+		Method: http.MethodGet,
+	})
+	checkClientHttpBody(t, resp, e, `3`)
+
+	v := url.Values{
+		`v0`: []string{`3`},
+		`v1`: []string{`4`},
+	}
+	str := v.Encode()
+	resp, e = client.Unary(context.Background(), &httpadapter.MessageRequest{
+		URL:     BaseURL + `/add`,
+		Method:  http.MethodPost,
+		Body:    strings.NewReader(str),
+		BodyLen: uint64(len(str)),
+	})
+	checkClientHttpBody(t, resp, e, `7`)
+
+	b, _ := json.Marshal(map[string]int{
+		`v0`: 5,
+		`v1`: 6,
+	})
+	resp, e = client.Unary(context.Background(), &httpadapter.MessageRequest{
+		URL:     BaseURL + `/add`,
+		Method:  http.MethodPost,
+		Body:    bytes.NewReader(b),
+		BodyLen: uint64(len(b)),
+		Header: http.Header{
+			`Content-Type`: []string{"application/json"},
+		},
+	})
+	checkClientHttpBody(t, resp, e, `11`)
 }

@@ -249,6 +249,7 @@ CS:
 					t.sendClose(id)
 					Logger.Printf(core.CommandConfirm.String()+": channel(%v) not ready\n", id)
 				} else if val.channel.Confirm(int(core.ByteOrder.Uint16(b[8:]))) {
+					val.channel.Close()
 					t.sendClose(id)
 					Logger.Printf(core.CommandConfirm.String()+": channel(%v) overflow\n", id)
 				}

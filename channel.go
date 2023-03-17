@@ -140,7 +140,7 @@ func (c *dataChannel) Serve() {
 		data      []byte
 	)
 	for {
-		b, confirm, exit = c.choose(b)
+		b, confirm, exit = c.choose(b, writed)
 		if exit {
 			break
 		} else if confirm > 0 {
@@ -178,7 +178,7 @@ func (c *dataChannel) Serve() {
 		}
 	}
 }
-func (c *dataChannel) choose(b []byte) (data []byte, confirm int, exit bool) {
+func (c *dataChannel) choose(b []byte, writed int) (data []byte, confirm int, exit bool) {
 	done := c.t.Done()
 	if len(b) == 0 {
 		select {
@@ -191,13 +191,24 @@ func (c *dataChannel) choose(b []byte) (data []byte, confirm int, exit bool) {
 		}
 	} else {
 		data = b
-		select {
-		case <-done:
-			exit = true
-		case <-c.ctx.Done():
-			exit = true
-		case confirm = <-c.confirm:
-		default:
+		available := c.remoteWindow - writed
+		if available == 0 {
+			select {
+			case <-done:
+				exit = true
+			case <-c.ctx.Done():
+				exit = true
+			case confirm = <-c.confirm:
+			}
+		} else {
+			select {
+			case <-done:
+				exit = true
+			case <-c.ctx.Done():
+				exit = true
+			case confirm = <-c.confirm:
+			default:
+			}
 		}
 	}
 	return
