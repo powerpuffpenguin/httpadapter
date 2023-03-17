@@ -1,9 +1,12 @@
 package httpadapter_test
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,8 +106,18 @@ func TestClientSleep(t *testing.T) {
 func TestClientHttp(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc(`/version`, func(w http.ResponseWriter, r *http.Request) {
+		for _, v := range r.Header.Values(`Accept`) {
+			if strings.HasPrefix(v, `application/json`) {
+				w.Header().Set(`Content-Type`, `application/json; charset=utf-8`)
+				json.NewEncoder(w).Encode(map[string]string{
+					`version`:  core.Version,
+					`protocol`: core.ProtocolVersion,
+				})
+				return
+			}
+		}
 		w.Header().Set(`Content-Type`, `text/plain; charset=utf-8`)
-		w.Write([]byte(fmt.Sprintf("version=%v\nprotocol=%v\n",
+		w.Write([]byte(fmt.Sprintf("version=%v\nprotocol=%v",
 			core.Version,
 			core.ProtocolVersion,
 		)))
@@ -115,9 +128,87 @@ func TestClientHttp(t *testing.T) {
 		httpadapter.ServerHTTP(mux),
 	)
 	defer s.CloseAndWait()
-
 	client := httpadapter.NewClient(Addr)
 
-	client.Dial()
+	// bad gateway
+	resp, e := client.Unary(context.Background(), &httpadapter.UnaryRequest{
+		URL:    `abc`,
+		Method: http.MethodPost,
+	})
+	if !assert.Nil(t, e) {
+		t.FailNow()
+	}
+	resp.Body.Close()
+	if !assert.Equal(t, http.StatusBadGateway, resp.Status) {
+		t.FailNow()
+	}
 
+	// 404
+	resp, e = client.Unary(context.Background(), &httpadapter.UnaryRequest{
+		URL:    BaseURL + `/404`,
+		Method: http.MethodGet,
+	})
+	if !assert.Nil(t, e) {
+		t.FailNow()
+	}
+	resp.Body.Close()
+	if !assert.Equal(t, http.StatusNotFound, resp.Status) {
+		t.FailNow()
+	}
+
+	// text/plain
+	resp, e = client.Unary(context.Background(), &httpadapter.UnaryRequest{
+		URL:    BaseURL + `/version`,
+		Method: http.MethodGet,
+	})
+	if !assert.Nil(t, e) {
+		t.FailNow()
+	}
+	if !assert.Equal(t, http.StatusOK, resp.Status) {
+		t.FailNow()
+	}
+	if !assert.Equal(t, resp.Header.Get(`Content-Type`), `text/plain; charset=utf-8`) {
+		t.FailNow()
+	}
+
+	b, e := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !assert.Nil(t, e) {
+		t.FailNow()
+	}
+	if !assert.Equal(t, string(b), fmt.Sprintf("version=%v\nprotocol=%v",
+		core.Version,
+		core.ProtocolVersion,
+	)) {
+		t.FailNow()
+	}
+
+	// json
+	resp, e = client.Unary(context.Background(), &httpadapter.UnaryRequest{
+		URL:    BaseURL + `/version`,
+		Method: http.MethodGet,
+		Header: http.Header{
+			`Accept`: []string{`application/json`},
+		},
+	})
+	if !assert.Nil(t, e) {
+		t.FailNow()
+	}
+	if !assert.Equal(t, http.StatusOK, resp.Status) {
+		t.FailNow()
+	}
+	if !assert.Equal(t, resp.Header.Get(`Content-Type`), `application/json; charset=utf-8`) {
+		t.FailNow()
+	}
+	b, e = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !assert.Nil(t, e) {
+		t.FailNow()
+	}
+	if !assert.Equal(t, string(b), fmt.Sprintf(`{"protocol":"%v","version":"%v"}`+"\n",
+		core.ProtocolVersion,
+		core.Version,
+	)) {
+		t.FailNow()
+	}
 }

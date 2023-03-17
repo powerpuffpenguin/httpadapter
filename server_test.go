@@ -14,6 +14,7 @@ import (
 )
 
 const Addr = "127.0.0.1:12233"
+const BaseURL = "http://" + Addr
 
 type _Server struct {
 	*httpadapter.Server

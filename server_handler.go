@@ -150,7 +150,7 @@ func (f *forwardConn) unary(md *core.ClientMetadata, bodylen int) {
 		return
 	}
 	// 設置 header
-	for k, v := range req.Header {
+	for k, v := range md.Header {
 		k0 := strings.ToLower(k)
 		if k0 == `connection` ||
 			k0 == `content-length` {
@@ -185,7 +185,7 @@ func (f *forwardConn) unary(md *core.ClientMetadata, bodylen int) {
 	f.sendResponse(resp.StatusCode, resp.Header, resp.Body, uint32(length))
 }
 func (f *forwardConn) sendResponse(status int, header http.Header, body io.Reader, bodylen uint32) {
-	if f.c.Context() != nil {
+	if f.c.Context().Err() != nil {
 		return
 	}
 	md := core.ServerMetadata{
@@ -215,7 +215,7 @@ func (f *forwardConn) sendResponse(status int, header http.Header, body io.Reade
 	f.delayWait()
 }
 func (f *forwardConn) sendText(status int, body string) {
-	if f.c.Context() != nil {
+	if f.c.Context().Err() != nil {
 		return
 	}
 

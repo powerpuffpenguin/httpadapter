@@ -213,9 +213,9 @@ CS:
 			size := int(core.ByteOrder.Uint16(b[8:]))
 			var data []byte
 			if len(b) < size {
-				data = b[:size]
-			} else {
 				data = make([]byte, size)
+			} else {
+				data = b[:size]
 			}
 			_, e = io.ReadFull(r, data)
 			if e != nil {
