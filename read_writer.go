@@ -3,6 +3,8 @@ package httpadapter
 import (
 	"errors"
 	"io"
+
+	"github.com/powerpuffpenguin/easygo/bytes"
 )
 
 var ErrWriteOverflow = errors.New(`httpadapter: ReadWriter write overflow`)
@@ -23,7 +25,7 @@ func NewReadWriter(buffer []byte) *ReadWriter {
 
 // 將數據寫入緩衝區，如果緩衝區沒有足夠可用空間將返回 0,ErrWriteOverflow 並且什麼都不寫入
 func (rw *ReadWriter) WriteString(s string) (int, error) {
-	return rw.Write(StringToBytes(s))
+	return rw.Write(bytes.StringToBytes(s))
 }
 
 // 清空緩衝區中的數據

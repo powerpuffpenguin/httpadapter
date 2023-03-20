@@ -231,8 +231,8 @@ func (f *forwardConn) readWS(ws *websocket.Conn, b []byte) (closed bool, e error
 		if e != nil {
 			if e == io.EOF {
 				b[0] = 1
-				core.ByteOrder.PutUint16(b[1:], 0)
-				_, e = f.c.Write(b[:3])
+				core.ByteOrder.PutUint16(b[1:], uint16(n))
+				_, e = f.c.Write(b[:3+n])
 				if e != nil {
 					closed = true
 					return
@@ -279,7 +279,7 @@ func (f *forwardConn) writeWS(ws *websocket.Conn, b []byte) (closed bool, e erro
 			return
 		}
 		end = b[0] == 1
-		l = core.ByteOrder.Uint16(b[2:])
+		l = core.ByteOrder.Uint16(b[1:])
 		if l != 0 {
 			_, e = io.Copy(w, io.LimitReader(f.c, int64(l)))
 			if e != nil {
