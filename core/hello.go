@@ -50,7 +50,7 @@ type ClientHello struct {
 	// Flag string = Flag
 
 	// 客戶端窗口大小
-	Window uint16
+	Window uint32
 
 	// 客戶端支持的 協議版本
 	Version []string
@@ -84,17 +84,17 @@ func ReadClientHello(r io.Reader, buf []byte) (hello ClientHello,
 		return
 	}
 	buf = buf[flagsize:]
-	_, e = io.ReadFull(r, buf[:4])
+	_, e = io.ReadFull(r, buf[:6])
 	if e != nil {
 		return
 	}
-	window := ByteOrder.Uint16(buf)
+	window := ByteOrder.Uint32(buf)
 	if window < 1 {
 		code = HelloInvalidWindow
 		return
 	}
 
-	vs := int(ByteOrder.Uint16(buf[2:]))
+	vs := int(ByteOrder.Uint16(buf[4:]))
 	if vs < 1 {
 		code = HelloInvalidVersion
 		return
@@ -135,7 +135,7 @@ func (m *ClientHello) verify() (size int, e error) {
 	for _, v := range m.Version {
 		vs += len(v)
 	}
-	size = len(Flag) + 4 + vs
+	size = len(Flag) + 6 + vs
 	return
 }
 func (m *ClientHello) marshalTo(b []byte) (e error) {
@@ -144,8 +144,8 @@ func (m *ClientHello) marshalTo(b []byte) (e error) {
 	b = b[n:]
 
 	// window
-	ByteOrder.PutUint16(b, m.Window)
-	b = b[2:]
+	ByteOrder.PutUint32(b, m.Window)
+	b = b[4:]
 
 	// version
 	vs := strings.Join(m.Version, ",")
@@ -200,7 +200,7 @@ type ServerHello struct {
 	// 服務器返回的響應代碼
 	Code Hello
 	// 服務器窗口大小
-	Window uint16
+	Window uint32
 	// 返回的 message 或者 version
 	Message string
 }
@@ -224,18 +224,18 @@ func ReadServerHello(r io.Reader, buf []byte) (hello ServerHello, e error) {
 		e = ErrUnknowProtocol
 		return
 	}
-	_, e = io.ReadFull(r, buf[:5])
+	_, e = io.ReadFull(r, buf[:7])
 	if e != nil {
 		return
 	}
 	code := Hello(buf[0])
-	window := ByteOrder.Uint16(buf[1:])
+	window := ByteOrder.Uint32(buf[1:])
 	if window < 1 {
 		e = HelloError(HelloInvalidWindow)
 		return
 	}
 
-	msglen := int(ByteOrder.Uint16(buf[3:]))
+	msglen := int(ByteOrder.Uint16(buf[5:]))
 	if bufsize < msglen {
 		if autobuf {
 			buf = make([]byte, msglen)
@@ -280,7 +280,7 @@ func (m *ServerHello) verify() (size int, e error) {
 		e = errors.New(`invalid message`)
 		return
 	}
-	size = len(Flag) + 5 + len(m.Message)
+	size = len(Flag) + 7 + len(m.Message)
 	return
 }
 func (m *ServerHello) marshalTo(b []byte) (e error) {
@@ -293,9 +293,8 @@ func (m *ServerHello) marshalTo(b []byte) (e error) {
 	b = b[1:]
 
 	// window
-	ByteOrder.PutUint16(b, m.Window)
-
-	b = b[2:]
+	ByteOrder.PutUint32(b, m.Window)
+	b = b[4:]
 
 	// message
 	size := len(m.Message)

@@ -136,7 +136,7 @@ type asyncHello struct {
 	backend net.Conn
 	code    core.Hello
 	version string
-	window  uint16
+	window  uint32
 	e       error
 }
 
@@ -147,7 +147,7 @@ func (s *Server) serve(l *httpListner, rw net.Conn) {
 		b       = make([]byte, 256)
 		code    core.Hello
 		version string
-		window  uint16
+		window  uint32
 	)
 	if s.opts.timeout > 0 {
 		timer := time.NewTimer(s.opts.timeout)
@@ -248,7 +248,7 @@ func (s *Server) sendHello(rw net.Conn, b []byte, hello core.Hello, version stri
 	_, e = rw.Write(data)
 	return
 }
-func (s *Server) hello(rw net.Conn, b []byte) (backend net.Conn, code core.Hello, version string, window uint16, e error) {
+func (s *Server) hello(rw net.Conn, b []byte) (backend net.Conn, code core.Hello, version string, window uint32, e error) {
 	msg, code, flag, e := core.ReadClientHello(rw, b)
 	if code == core.HelloInvalidProtocol {
 		backend = &httpConn{
@@ -279,7 +279,7 @@ func (s *Server) hello(rw net.Conn, b []byte) (backend net.Conn, code core.Hello
 }
 
 // 返回服務器的 channel window 大小
-func (s *Server) Window() uint16 {
+func (s *Server) Window() uint32 {
 	return s.opts.window
 }
 

@@ -18,7 +18,7 @@ var defaultServerOptions = serverOptions{
 }
 
 type serverOptions struct {
-	window         uint16
+	window         uint32
 	timeout        time.Duration
 	handler        http.Handler
 	backend        Backend
@@ -35,7 +35,7 @@ type Backend interface {
 type ServerOption = option.Option[serverOptions]
 
 // 設置服務器 channel 窗口大小
-func ServerWindow(window uint16) ServerOption {
+func ServerWindow(window uint32) ServerOption {
 	return option.New(func(opts *serverOptions) {
 		if window > 0 {
 			opts.window = window

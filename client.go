@@ -135,7 +135,7 @@ CS:
 }
 
 // 返回客戶端 channel window 大小
-func (c *Client) Window() uint16 {
+func (c *Client) Window() uint32 {
 	return c.opts.window
 }
 
