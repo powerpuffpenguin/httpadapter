@@ -12,6 +12,7 @@ import (
 	"github.com/powerpuffpenguin/httpadapter/core"
 	"github.com/stretchr/testify/assert"
 )
+
 const TCP = "127.0.0.1:12234"
 const Addr = "127.0.0.1:12233"
 const BaseURL = "http://" + Addr
@@ -115,7 +116,7 @@ func TestServerHTTP(t *testing.T) {
 
 var testErrors = []struct {
 	Flag    string
-	Window  uint16
+	Window  uint32
 	Version []string
 	Code    core.Hello
 	Match   string
@@ -150,14 +151,14 @@ func TestServer(t *testing.T) {
 
 	for _, node := range testErrors {
 		vs := strings.Join(node.Version, ",")
-		b := make([]byte, len(core.Flag)+2+2+len(vs))
+		b := make([]byte, len(core.Flag)+4+2+len(vs))
 		flag := node.Flag
 		if flag == `` {
 			flag = core.Flag
 		}
 		i := copy(b, flag)
-		core.ByteOrder.PutUint16(b[i:], node.Window)
-		i += 2
+		core.ByteOrder.PutUint32(b[i:], node.Window)
+		i += 4
 		core.ByteOrder.PutUint16(b[i:], uint16(len(vs)))
 		i += 2
 		copy(b[i:], []byte(vs))
@@ -171,7 +172,7 @@ func TestServer(t *testing.T) {
 			t.FailNow()
 		}
 
-		min := len(core.Flag) + 1 + 2 + 2
+		min := len(core.Flag) + 1 + 4 + 2
 		_, e = io.ReadAtLeast(c, b[:min], min)
 		if !assert.Nil(t, e) {
 			t.FailNow()
@@ -185,11 +186,11 @@ func TestServer(t *testing.T) {
 		}
 		i++
 
-		window := core.ByteOrder.Uint16(b[i:])
+		window := core.ByteOrder.Uint32(b[i:])
 		if !assert.Equal(t, s.Window(), window) {
 			t.FailNow()
 		}
-		i += 2
+		i += 4
 		var str string
 		if node.Code == core.HelloOk {
 			str = node.Match

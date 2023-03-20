@@ -15,7 +15,7 @@ var defaultClientOptions = clientOptions{
 }
 
 type clientOptions struct {
-	window uint16
+	window uint32
 
 	readBuffer  int
 	writeBuffer int
@@ -30,7 +30,7 @@ type ClientDialer interface {
 type ClientOption option.Option[clientOptions]
 
 // 設置客戶端 channel 窗口大小
-func WithWindow(window uint16) ClientOption {
+func WithWindow(window uint32) ClientOption {
 	return option.New(func(opts *clientOptions) {
 		if window > 0 {
 			opts.window = window
