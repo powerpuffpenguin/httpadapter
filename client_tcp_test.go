@@ -3,10 +3,13 @@ package httpadapter_test
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,7 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestClientWebsocket(t *testing.T) {
+func TestClientTCP(t *testing.T) {
 	var upgrader = websocket.Upgrader{}
 	mux := http.NewServeMux()
 	var step int64
@@ -36,6 +39,47 @@ func TestClientWebsocket(t *testing.T) {
 		}
 		w.Write([]byte("ok"))
 	})
+	var wait sync.WaitGroup
+	l, e := net.Listen(`tcp`, TCP)
+	if !assert.Nil(t, e) {
+		t.FailNow()
+	}
+	defer func() {
+		l.Close()
+		wait.Wait()
+	}()
+	wait.Add(1)
+	go func() {
+		defer wait.Done()
+		for {
+			c, e := l.Accept()
+			if e != nil {
+				break
+			}
+			go func(c net.Conn) {
+				defer func() {
+					c.Close()
+				}()
+				b := make([]byte, 1024)
+				for {
+					_, e = io.ReadFull(c, b[:2])
+					if e != nil {
+						break
+					}
+					n := binary.LittleEndian.Uint16(b)
+					_, e = io.ReadFull(c, b[2:2+n])
+					if e != nil {
+						break
+					}
+					_, e = c.Write(b[:2+n])
+					if e != nil {
+						break
+					}
+				}
+			}(c)
+		}
+	}()
+
 	mux.HandleFunc(`/ws`, func(w http.ResponseWriter, r *http.Request) {
 		ws, e := upgrader.Upgrade(w, r, nil)
 		if e != nil {
@@ -87,9 +131,24 @@ func TestClientWebsocket(t *testing.T) {
 	}
 	defer ws.Close()
 
+	c, resp, e := client.Connect(context.Background(),
+		"tcp://"+TCP,
+	)
+	if !assert.Nil(t, e) {
+		t.FailNow()
+	}
+	if !assert.Equal(t, resp.Status, http.StatusSwitchingProtocols) {
+		t.FailNow()
+	}
+	defer c.Close()
+
 	// TextMessage
 	for i := 0; i < 20; i++ {
 		str := fmt.Sprintf("str-%v", i)
+		send := make([]byte, len(str)+2)
+		binary.LittleEndian.PutUint16(send, uint16(len(str)))
+		copy(send[2:], str)
+
 		n, e := ws.WriteText(str)
 		if !assert.Nil(t, e) {
 			t.FailNow()
@@ -97,6 +156,11 @@ func TestClientWebsocket(t *testing.T) {
 		if !assert.Equal(t, len(str), n) {
 			t.FailNow()
 		}
+		_, e = c.Write(send)
+		if !assert.Nil(t, e) {
+			t.FailNow()
+		}
+
 		ty, b, e := ws.ReadMessage()
 		if !assert.Nil(t, e) {
 			t.FailNow()
@@ -105,6 +169,15 @@ func TestClientWebsocket(t *testing.T) {
 			t.FailNow()
 		}
 		if !assert.Equal(t, string(b), str) {
+			t.FailNow()
+		}
+
+		recv := make([]byte, len(send))
+		_, e = io.ReadFull(c, recv)
+		if !assert.Nil(t, e) {
+			t.FailNow()
+		}
+		if !assert.Equal(t, send, recv) {
 			t.FailNow()
 		}
 	}
@@ -155,6 +228,11 @@ func TestClientWebsocket(t *testing.T) {
 			t.FailNow()
 		}
 		str := fmt.Sprintf("str-%v", i)
+
+		send := make([]byte, len(str)+2)
+		binary.LittleEndian.PutUint16(send, uint16(len(str)))
+		copy(send[2:], str)
+
 		n, e := ws.WriteText(str)
 		if !assert.Nil(t, e) {
 			t.FailNow()
@@ -162,6 +240,11 @@ func TestClientWebsocket(t *testing.T) {
 		if !assert.Equal(t, len(str), n) {
 			t.FailNow()
 		}
+		_, e = c.Write(send)
+		if !assert.Nil(t, e) {
+			t.FailNow()
+		}
+
 		ty, b, e := ws.ReadMessage()
 		if !assert.Nil(t, e) {
 			t.FailNow()
@@ -170,6 +253,15 @@ func TestClientWebsocket(t *testing.T) {
 			t.FailNow()
 		}
 		if !assert.Equal(t, string(b), str) {
+			t.FailNow()
+		}
+
+		recv := make([]byte, len(send))
+		_, e = io.ReadFull(c, recv)
+		if !assert.Nil(t, e) {
+			t.FailNow()
+		}
+		if !assert.Equal(t, send, recv) {
 			t.FailNow()
 		}
 	}

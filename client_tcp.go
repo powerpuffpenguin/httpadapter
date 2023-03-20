@@ -4,25 +4,24 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 
 	"github.com/powerpuffpenguin/httpadapter/core"
 )
 
-// 請求代理訪問一個 websocket
-func (c *Client) Websocket(ctx context.Context, u string, header http.Header) (ws *Websocket, resp *MessageResponse, e error) {
+// 請求代理訪問一個 tcp/tls
+func (c *Client) Connect(ctx context.Context, u string) (tc net.Conn, resp *MessageResponse, e error) {
 	uri, e := url.Parse(u)
 	if e != nil {
 		return
-	} else if uri.Scheme != `ws` && uri.Scheme != `wss` || uri.Host == `` {
+	} else if uri.Scheme != `tcp` && uri.Scheme != `tls` || uri.Host == `` || uri.Port() == `` {
 		e = errors.New(`not support url: ` + u)
 		return
 	}
-
 	cc, resp, e := c.unary(ctx, nil, 0, &core.ClientMetadata{
-		URL:    u,
-		Header: header,
+		URL: u,
 	})
 	if e != nil {
 		return
@@ -39,6 +38,6 @@ func (c *Client) Websocket(ctx context.Context, u string, header http.Header) (w
 		}
 		return
 	}
-	ws = &Websocket{c: cc}
+	tc = cc
 	return
 }

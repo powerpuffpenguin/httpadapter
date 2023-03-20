@@ -2,9 +2,11 @@ package httpadapter
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/powerpuffpenguin/httpadapter/core"
+	"github.com/powerpuffpenguin/httpadapter/pipe"
 )
 
 type Handler interface {
@@ -125,6 +128,8 @@ func (f *forwardConn) Serve() {
 		return
 	}
 	switch uri.Scheme {
+	case "tcp", "tls":
+		f.tcp(uri, &metadata, int64(bodylen))
 	case "ws", "wss":
 		f.websocket(&metadata, int64(bodylen))
 	case "http", "https":
@@ -142,6 +147,35 @@ func (f *forwardConn) Serve() {
 	default:
 		f.sendText(http.StatusBadRequest, `not support scheme: `+uri.Scheme)
 	}
+}
+func (f *forwardConn) tcp(uri *url.URL, md *core.ClientMetadata, bodylen int64) {
+	if bodylen != 0 {
+		f.sendText(http.StatusBadRequest, `bodylen invalid`)
+		return
+	}
+	var (
+		ctx = f.c.Context()
+		c   net.Conn
+		e   error
+	)
+	if uri.Scheme == "tcp" {
+		var dialer net.Dialer
+		c, e = dialer.DialContext(ctx, `tcp`, uri.Host)
+	} else {
+		var dialer tls.Dialer
+		c, e = dialer.DialContext(ctx, `tcp`, uri.Host)
+	}
+	if e != nil {
+		f.sendText(http.StatusBadGateway, e.Error())
+		return
+	}
+	defer c.Close()
+	e = f.sendOk(http.StatusSwitchingProtocols, nil, nil, 0)
+	if e != nil {
+		return
+	}
+	go pipe.Copy(c, f.c, nil)
+	pipe.Copy(f.c, c, nil)
 }
 func (f *forwardConn) websocket(md *core.ClientMetadata, bodylen int64) {
 	if bodylen != 0 {
@@ -171,12 +205,12 @@ func (f *forwardConn) websocket(md *core.ClientMetadata, bodylen int64) {
 			if e != nil {
 				if closed {
 					f.c.Close()
-					time.Sleep(time.Second)
+					time.Sleep(time.Second * 3)
 					ws.Close()
 				} else {
 					ws.Close()
 					if f.c.Context().Err() == nil {
-						time.Sleep(time.Second)
+						time.Sleep(time.Second * 3)
 						f.c.Close()
 					}
 				}
@@ -193,12 +227,12 @@ func (f *forwardConn) websocket(md *core.ClientMetadata, bodylen int64) {
 		if e != nil {
 			if closed {
 				f.c.Close()
-				time.Sleep(time.Second)
+				time.Sleep(time.Second * 3)
 				ws.Close()
 			} else {
 				ws.Close()
 				if f.c.Context().Err() == nil {
-					time.Sleep(time.Second)
+					time.Sleep(time.Second * 3)
 					f.c.Close()
 				}
 			}

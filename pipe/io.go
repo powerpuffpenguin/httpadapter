@@ -16,14 +16,14 @@ func Copy(dst, src io.ReadWriteCloser,
 		n, e = src.Read(b)
 		if e != nil {
 			src.Close()
-			time.Sleep(time.Second * 5)
+			time.Sleep(time.Second * 3)
 			dst.Close() // 等待 dst 寫入完成
 			break
 		}
 		_, e = dst.Write(b[:n])
 		if e != nil {
 			dst.Close()
-			time.Sleep(time.Second * 5)
+			time.Sleep(time.Second * 3)
 			src.Close() // 等待 src 寫入完成
 			break
 		}

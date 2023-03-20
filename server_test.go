@@ -12,7 +12,7 @@ import (
 	"github.com/powerpuffpenguin/httpadapter/core"
 	"github.com/stretchr/testify/assert"
 )
-
+const TCP = "127.0.0.1:12234"
 const Addr = "127.0.0.1:12233"
 const BaseURL = "http://" + Addr
 const BaseWebsocket = "ws://" + Addr

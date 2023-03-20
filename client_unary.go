@@ -7,32 +7,16 @@ import (
 	"errors"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/textproto"
+	"net/url"
 
 	"github.com/powerpuffpenguin/easygo"
 	"github.com/powerpuffpenguin/httpadapter/core"
 )
 
-// 請求一個一元方法
-func (c *Client) Unary(ctx context.Context, req *MessageRequest) (resp *MessageResponse, e error) {
-	var bodylen uint64
-	switch req.Method {
-	case http.MethodPost, http.MethodPut, http.MethodPatch:
-		if req.BodyLen != 0 && req.Body != nil {
-			bodylen = req.BodyLen
-		}
-	}
-	if bodylen > math.MaxInt64 {
-		e = errors.New(`body length too long`)
-		return
-	}
-
-	md := &core.ClientMetadata{
-		URL:    req.URL,
-		Method: req.Method,
-		Header: req.Header,
-	}
+func (c *Client) unary(ctx context.Context, body io.Reader, bodylen uint64, md *core.ClientMetadata) (cc net.Conn, resp *MessageResponse, e error) {
 	w := bytes.NewBuffer(make([]byte, 10, 256))
 	e = json.NewEncoder(w).Encode(md)
 	if e != nil {
@@ -63,7 +47,7 @@ func (c *Client) Unary(ctx context.Context, req *MessageRequest) (resp *MessageR
 		}
 		// write body
 		if bodylen > 0 {
-			_, e = io.Copy(conn, req.Body)
+			_, e = io.Copy(conn, body)
 			if e != nil {
 				resp.Second = e
 				ch <- resp
@@ -132,13 +116,53 @@ func (c *Client) Unary(ctx context.Context, req *MessageRequest) (resp *MessageR
 	}()
 	select {
 	case <-ctx.Done():
-		conn.Close()
 		e = ctx.Err()
+		conn.Close()
 	case obj := <-ch:
 		resp, e = &obj.First, obj.Second
-		if e != nil || resp.Body == nil {
+		if e == nil {
+			cc = conn
+		} else {
 			conn.Close()
 		}
+	}
+	return
+}
+
+// 請求一個一元方法
+func (c *Client) Unary(ctx context.Context, req *MessageRequest) (resp *MessageResponse, e error) {
+	uri, e := url.Parse(req.URL)
+	if e != nil {
+		return
+	} else if uri.Scheme != `http` && uri.Scheme != `https` || uri.Host == `` {
+		e = errors.New(`not support url: ` + req.URL)
+		return
+	}
+
+	var bodylen uint64
+	switch req.Method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch:
+		if req.BodyLen != 0 && req.Body != nil {
+			bodylen = req.BodyLen
+		}
+	case http.MethodGet, http.MethodHead, http.MethodDelete:
+	default:
+		e = errors.New(`not support method: ` + req.Method)
+		return
+	}
+	if bodylen > math.MaxInt64 {
+		e = errors.New(`body length too long`)
+		return
+	}
+	cc, resp, e := c.unary(ctx, req.Body, req.BodyLen, &core.ClientMetadata{
+		URL:    req.URL,
+		Method: req.Method,
+		Header: req.Header,
+	})
+	if e != nil {
+		return
+	} else if resp.Body == nil {
+		cc.Close()
 	}
 	return
 }

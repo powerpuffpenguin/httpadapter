@@ -19,6 +19,10 @@ type Websocket struct {
 	c net.Conn
 }
 
+func (w *Websocket) Close() error {
+	return w.c.Close()
+}
+
 // return writer not goroutine safe
 func (w *Websocket) NextWriter(t int) (io.WriteCloser, error) {
 	switch t {

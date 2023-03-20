@@ -91,6 +91,8 @@
     }
     ```
 
+    目前不允許在發送 message 時設置 body
+
 2.  服務器會響應 Message 其 metadata 定義如下:
 
     ```
@@ -120,3 +122,28 @@
     FrameData 由 DataFlag(1 字節)+DataLen(2字節)+DataBinary(二進制數據) 組成
 
     在 FrameData 數組中，最後一個 FrameData 的 DataFlag 需要設置爲 1 表示這一幀結束其它的 DataFlag 設置爲 0；DataLen 記錄了 DataBinary 的長度； DataBinary 是要寫入到 websocket(或從 websocket 中讀取) 的二進制數據
+
+## tcp
+
+1. 首先由客戶端發送一個 Message 其 metadata 定義如下:
+
+    ```
+    {
+        // 指定了要請求的 websocket 接口網址，tcp 協議必須指定端口
+        // 可以使用 tls 替代 tcp 則會使用 tls 加密的tcp連接後端服務
+        "url": "tcp://127.0.0.1:9000", 
+        "url": "tls://127.0.0.1:9000", 
+    }
+    ```
+
+    目前不允許在發送 message 時設置 body
+
+2.  服務器會響應 Message 其 metadata 定義如下:
+
+    ```
+    {
+        // 這個值必須是 101 表示切換協議成功，其它任何值都代表了錯誤
+        "status": 101,
+    }
+    ```
+3. 一旦步驟2成功就可以在 channel 中直接進行雙向的數據流傳輸， channel 會原封不動的在前後端之間轉發 tcp 數據

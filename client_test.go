@@ -137,20 +137,20 @@ func TestClientHttp(t *testing.T) {
 	defer client.Close()
 
 	// bad gateway
-	resp, e := client.Unary(context.Background(), &httpadapter.MessageRequest{
+	_, e := client.Unary(context.Background(), &httpadapter.MessageRequest{
 		URL:    `abc`,
 		Method: http.MethodPost,
 	})
-	if !assert.Nil(t, e) {
+	if !assert.True(t, strings.HasPrefix(e.Error(), `not support url:`)) {
 		t.FailNow()
 	}
-	resp.Body.Close()
-	if !assert.Equal(t, http.StatusBadRequest, resp.Status) {
-		t.FailNow()
-	}
+	// resp.Body.Close()
+	// if !assert.Equal(t, http.StatusBadRequest, resp.Status) {
+	// 	t.FailNow()
+	// }
 
 	// 404
-	resp, e = client.Unary(context.Background(), &httpadapter.MessageRequest{
+	resp, e := client.Unary(context.Background(), &httpadapter.MessageRequest{
 		URL:    BaseURL + `/404`,
 		Method: http.MethodGet,
 	})
