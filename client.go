@@ -107,6 +107,14 @@ CS:
 		case key := <-c.remove:
 			delete(keys, key)
 		case ch := <-c.ch:
+			if t != nil {
+				select {
+				// check healthy
+				case <-t.done:
+					t = nil
+				default:
+				}
+			}
 			if t == nil {
 				t, e = c.newTransport()
 				if e != nil {
