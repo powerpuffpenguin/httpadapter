@@ -1,4 +1,6 @@
-local K=1024;
+local KB=1024;
+local MB=KB*1024;
+
 local Nanosecond   = 1;
 local Microsecond          = 1000 * Nanosecond;
 local Millisecond          = 1000 * Microsecond;
@@ -11,11 +13,11 @@ local Options = {
     Server: "127.0.0.1:8000",
 
     // 服務器窗口大小
-    Window: 32 * K,
+    Window: MB * 10,
     // 讀取緩衝區大小
-    ReadBuffer: 10*K,
+    ReadBuffer: MB * 10,
     // 寫入緩衝區大小
-    WriteBuffer: 10*K,
+    WriteBuffer: MB * 10,
 
     // 一段時間內沒有數據流動就發送 ping 驗證 tcp 連接是否還有效
     Ping: Second * 50,

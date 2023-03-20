@@ -73,41 +73,58 @@ func server() *cobra.Command {
 			}
 			var opts []httpadapter.ServerOption
 			if cnf.Options.Backend != `` {
-				httpadapter.ServerBackend(
-					httpadapter.NewTCPBackend(cnf.Options.Backend),
+				opts = append(opts,
+					httpadapter.ServerBackend(
+						httpadapter.NewTCPBackend(cnf.Options.Backend),
+					),
 				)
 			}
 			if cnf.Options.Window > 0 {
-				httpadapter.ServerWindow(
-					cnf.Options.Window,
+				opts = append(opts,
+					httpadapter.ServerWindow(
+						cnf.Options.Window,
+					),
 				)
 			}
 			if cnf.Options.Timeout > 0 {
-				httpadapter.ServerTimeout(
-					cnf.Options.Timeout,
+				opts = append(opts,
+					httpadapter.ServerTimeout(
+						cnf.Options.Timeout,
+					),
 				)
 			}
 			if cnf.Options.ReadBuffer > 0 {
-				httpadapter.ServerReadBuffer(
-					cnf.Options.ReadBuffer,
+				opts = append(opts,
+					httpadapter.ServerReadBuffer(
+						cnf.Options.ReadBuffer,
+					),
 				)
 			}
 			if cnf.Options.WriteBuffer > 0 {
-				httpadapter.ServerReadBuffer(
-					cnf.Options.WriteBuffer,
+				opts = append(opts,
+					httpadapter.ServerReadBuffer(
+						cnf.Options.WriteBuffer,
+					),
 				)
 			}
 			if cnf.Options.Channels > 0 {
-				httpadapter.ServerChannels(
-					cnf.Options.Channels,
+				opts = append(opts,
+					httpadapter.ServerChannels(
+						cnf.Options.Channels,
+					),
 				)
 			}
 			if cnf.Options.Ping > 0 {
-				httpadapter.ServerPing(
-					cnf.Options.Ping,
+				opts = append(opts,
+					httpadapter.ServerPing(
+						cnf.Options.Ping,
+					),
 				)
 			}
-			httpadapter.NewServer(opts...).Serve(l)
+			s := httpadapter.NewServer(opts...)
+
+			log.Println(s.Window(), cnf.Options.Window)
+			s.Serve(l)
 		},
 	}
 	flags := cmd.Flags()

@@ -1,4 +1,6 @@
-local K=1024;
+local KB=1024;
+local MB=KB*1024;
+
 local Nanosecond   = 1;
 local Microsecond          = 1000 * Nanosecond;
 local Millisecond          = 1000 * Microsecond;
@@ -16,13 +18,13 @@ local Hour                 = 60 * Minute;
         Backend: "127.0.0.1:80",
 
         // 服務器窗口大小
-        Window: 32 * K,
+        Window: MB * 1,
         // 服務器等待連接超時時間
         Timeout: Second * 5,
         // 讀取緩衝區大小
-        ReadBuffer: 10*K,
+        ReadBuffer: MB * 1,
         // 寫入緩衝區大小
-        WriteBuffer: 10*K,
+        WriteBuffer: MB * 1,
         // 允許併發的通道數量，<1 則不限制
         // Channels: 10000 ,
         // 一段時間內沒有數據流動就發送 ping 驗證 tcp 連接是否還有效

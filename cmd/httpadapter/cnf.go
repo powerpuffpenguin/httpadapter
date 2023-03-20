@@ -18,7 +18,7 @@ type Server struct {
 		Backend string
 
 		// 服務器窗口大小
-		Window uint16
+		Window uint32
 		// 服務器等待連接超時時間
 		Timeout time.Duration
 		// 讀取緩衝區大小
@@ -60,7 +60,7 @@ type Tunnel struct {
 	Backend string
 
 	// 服務器窗口大小
-	Window uint16
+	Window uint32
 	// 讀取緩衝區大小
 	ReadBuffer int
 	// 寫入緩衝區大小
