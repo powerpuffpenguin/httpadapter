@@ -21,7 +21,6 @@ function help(){
     echo "  go                go build helper"
     echo "  run                run server"
     echo "  pack              pack release"
-    echo "  docker            docker build helper"
     echo
     echo "Flags:"
     echo "  -h, --help          help for $0"
@@ -50,11 +49,6 @@ case "$1" in
         shift
         export Command="$0 go"
         "$BashDir/script/go.sh" "$@"
-    ;;
-    docker)
-        shift
-        export Command="$0 docker"
-        "$BashDir/script/docker.sh" "$@"
     ;;
     *)
         if [[ "$1" == "" ]];then

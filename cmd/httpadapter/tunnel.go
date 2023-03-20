@@ -55,7 +55,7 @@ func tunnel() *cobra.Command {
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringVarP(&cnfpath, `cnf`, `c`, filepath.Join(BasePath(), `tunnel.jsonnet`), `configure file`)
+	flags.StringVarP(&cnfpath, `cnf`, `c`, filepath.Join(BasePath(), `etc`, `tunnel.jsonnet`), `configure file`)
 	return cmd
 }
 

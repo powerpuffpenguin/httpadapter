@@ -112,6 +112,6 @@ func server() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	flags.StringVarP(&addr, `addr`, `a`, ``, `server listen addr`)
-	flags.StringVarP(&cnfpath, `cnf`, `c`, filepath.Join(BasePath(), `server.jsonnet`), `configure file`)
+	flags.StringVarP(&cnfpath, `cnf`, `c`, filepath.Join(BasePath(), `etc`, `server.jsonnet`), `configure file`)
 	return cmd
 }
