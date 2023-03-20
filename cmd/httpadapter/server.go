@@ -121,10 +121,7 @@ func server() *cobra.Command {
 					),
 				)
 			}
-			s := httpadapter.NewServer(opts...)
-
-			log.Println(s.Window(), cnf.Options.Window)
-			s.Serve(l)
+			httpadapter.NewServer(opts...).Serve(l)
 		},
 	}
 	flags := cmd.Flags()
