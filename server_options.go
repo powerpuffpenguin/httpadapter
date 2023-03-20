@@ -15,7 +15,6 @@ var defaultServerOptions = serverOptions{
 	writeBuffer:    4096,
 	channels:       0,
 	channelHandler: defaultHandler,
-	client:         http.DefaultClient,
 }
 
 type serverOptions struct {
@@ -28,7 +27,6 @@ type serverOptions struct {
 	channels       int
 	channelHandler Handler
 	ping           time.Duration
-	client         *http.Client
 }
 type Backend interface {
 	Dial() (net.Conn, error)
@@ -117,5 +115,12 @@ func ServerWriteBufferChannels(channels int) ServerOption {
 func ServerPing(ping time.Duration) ServerOption {
 	return option.New(func(opts *serverOptions) {
 		opts.ping = ping
+	})
+}
+
+// 設置服務器在單個 tcp-chain 上允許的最大併發 channel 數量，如果 < 1 則不限制
+func ServerChannels(channels int) ServerOption {
+	return option.New(func(opts *serverOptions) {
+		opts.channels = channels
 	})
 }
