@@ -221,7 +221,8 @@ func (s *Server) serve(l *httpListner, rw net.Conn) {
 	}
 
 	// 執行轉發
-	newServerTransport(rw,
+	newServerTransport(s,
+		rw,
 		int(s.opts.window), int(window),
 		s.opts.channelHandler,
 	).Serve(
@@ -321,4 +322,9 @@ func (s *Server) Channels() int {
 // 返回服務器每隔多久對沒有數據的連接發送 tcp ping，<1 則不會發送
 func (s *Server) Ping() time.Duration {
 	return s.opts.ping
+}
+
+// 返回服務器如何連接轉發的 tcp
+func (s *Server) TCPDialer() TCPDialer {
+	return s.opts.tcpDialer
 }

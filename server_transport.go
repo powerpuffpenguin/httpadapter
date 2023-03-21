@@ -12,6 +12,7 @@ import (
 )
 
 type serverTransport struct {
+	server               *Server
 	c                    net.Conn
 	window, remoteWindow int
 	handler              Handler
@@ -22,11 +23,13 @@ type serverTransport struct {
 	ch   chan []byte
 }
 
-func newServerTransport(c net.Conn,
+func newServerTransport(server *Server,
+	c net.Conn,
 	window, remoteWindow int,
 	handler Handler,
 ) *serverTransport {
 	return &serverTransport{
+		server:       server,
 		c:            c,
 		window:       window,
 		remoteWindow: remoteWindow,
@@ -123,7 +126,7 @@ TS:
 					t.window, t.remoteWindow,
 				)
 				go val.Serve()
-				go t.handler.ServeChannel(val)
+				go t.handler.ServeChannel(t.server, val)
 				t.keys[id] = val
 				data[1+8] = 0
 			}

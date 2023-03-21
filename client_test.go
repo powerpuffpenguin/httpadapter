@@ -19,7 +19,7 @@ import (
 )
 
 func ServerEcho(duration time.Duration) httpadapter.ServerOption {
-	return httpadapter.ServerHandler(httpadapter.HandleFunc(func(c httpadapter.Conn) {
+	return httpadapter.ServerHandler(httpadapter.HandleFunc(func(srv *httpadapter.Server, c httpadapter.Conn) {
 		defer c.Close()
 		b := make([]byte, 10)
 		for {

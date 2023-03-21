@@ -1,6 +1,8 @@
 package httpadapter
 
 import (
+	"context"
+	"crypto/tls"
 	"net"
 	"net/http"
 	"time"
@@ -15,6 +17,7 @@ var defaultServerOptions = serverOptions{
 	writeBuffer:    4096,
 	channels:       0,
 	channelHandler: defaultHandler,
+	tcpDialer:      DefaultTCPDialer{},
 }
 
 type serverOptions struct {
@@ -27,11 +30,39 @@ type serverOptions struct {
 	channels       int
 	channelHandler Handler
 	ping           time.Duration
+	tcpDialer      TCPDialer
 }
+type tcpTCPDialerFunc struct {
+	f func(ctx context.Context, addr string, tls bool) (net.Conn, error)
+}
+
+func (d tcpTCPDialerFunc) DialContext(ctx context.Context, addr string, tls bool) (net.Conn, error) {
+	return d.f(ctx, addr, tls)
+}
+func TCPDialerFunc(f func(ctx context.Context, addr string, tls bool) (c net.Conn, e error)) TCPDialer {
+	return tcpTCPDialerFunc{
+		f: f,
+	}
+}
+
+type TCPDialer interface {
+	DialContext(ctx context.Context, addr string, tls bool) (net.Conn, error)
+}
+type DefaultTCPDialer struct{}
+
+func (DefaultTCPDialer) DialContext(ctx context.Context, addr string, safe bool) (net.Conn, error) {
+	if safe {
+		var dialer tls.Dialer
+		return dialer.DialContext(ctx, `tcp`, addr)
+	} else {
+		var dialer net.Dialer
+		return dialer.DialContext(ctx, `tcp`, addr)
+	}
+}
+
 type Backend interface {
 	Dial() (net.Conn, error)
 }
-
 type ServerOption = option.Option[serverOptions]
 
 // 設置服務器 channel 窗口大小
@@ -122,5 +153,16 @@ func ServerPing(ping time.Duration) ServerOption {
 func ServerChannels(channels int) ServerOption {
 	return option.New(func(opts *serverOptions) {
 		opts.channels = channels
+	})
+}
+
+// 設置服務器如何連接轉發的 tcp
+func ServerTCPDialer(dialer TCPDialer) ServerOption {
+	return option.New(func(opts *serverOptions) {
+		if dialer == nil {
+			opts.tcpDialer = DefaultTCPDialer{}
+		} else {
+			opts.tcpDialer = dialer
+		}
 	})
 }

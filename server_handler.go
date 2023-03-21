@@ -2,11 +2,9 @@ package httpadapter
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
 	"io"
 	"math"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -20,19 +18,19 @@ import (
 )
 
 type Handler interface {
-	ServeChannel(c Conn)
+	ServeChannel(srv *Server, c Conn)
 }
 type handlerFunc struct {
-	f func(c Conn)
+	f func(srv *Server, c Conn)
 }
 
-func HandleFunc(f func(c Conn)) Handler {
+func HandleFunc(f func(srv *Server, c Conn)) Handler {
 	return handlerFunc{
 		f: f,
 	}
 }
-func (h handlerFunc) ServeChannel(c Conn) {
-	h.f(c)
+func (h handlerFunc) ServeChannel(srv *Server, c Conn) {
+	h.f(srv, c)
 }
 
 var channelBytes = sync.Pool{
@@ -45,10 +43,10 @@ var defaultHandler channelHandler
 type channelHandler struct {
 }
 
-func (h channelHandler) ServeChannel(c Conn) {
+func (h channelHandler) ServeChannel(srv *Server, c Conn) {
 	f := &forwardConn{c: c}
 	defer f.Close()
-	f.Serve()
+	f.Serve(&srv.opts)
 }
 
 type forwardConn struct {
@@ -97,7 +95,7 @@ func (f *forwardConn) getBytes(end int) (buf *bytes.Buffer) {
 	buf = bytes.NewBuffer(b[:end])
 	return
 }
-func (f *forwardConn) Serve() {
+func (f *forwardConn) Serve(opts *serverOptions) {
 	b := f.getBuffer(10)
 	_, e := io.ReadFull(f.c, b)
 	if e != nil {
@@ -129,7 +127,7 @@ func (f *forwardConn) Serve() {
 	}
 	switch uri.Scheme {
 	case "tcp", "tls":
-		f.tcp(uri, &metadata, int64(bodylen))
+		f.tcp(opts, uri, &metadata, int64(bodylen))
 	case "ws", "wss":
 		f.websocket(&metadata, int64(bodylen))
 	case "http", "https":
@@ -148,23 +146,13 @@ func (f *forwardConn) Serve() {
 		f.sendText(http.StatusBadRequest, `not support scheme: `+uri.Scheme)
 	}
 }
-func (f *forwardConn) tcp(uri *url.URL, md *core.ClientMetadata, bodylen int64) {
+func (f *forwardConn) tcp(opts *serverOptions, uri *url.URL, md *core.ClientMetadata, bodylen int64) {
 	if bodylen != 0 {
 		f.sendText(http.StatusBadRequest, `bodylen invalid`)
 		return
 	}
-	var (
-		ctx = f.c.Context()
-		c   net.Conn
-		e   error
-	)
-	if uri.Scheme == "tcp" {
-		var dialer net.Dialer
-		c, e = dialer.DialContext(ctx, `tcp`, uri.Host)
-	} else {
-		var dialer tls.Dialer
-		c, e = dialer.DialContext(ctx, `tcp`, uri.Host)
-	}
+	ctx := f.c.Context()
+	c, e := opts.tcpDialer.DialContext(ctx, uri.Host, uri.Scheme == `tls`)
 	if e != nil {
 		f.sendText(http.StatusBadGateway, e.Error())
 		return

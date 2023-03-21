@@ -47,9 +47,13 @@ func (c *Client) Close() (e error) {
 	}
 	return
 }
+
+// 連接服務器返回一個 channel
 func (c *Client) Dial() (net.Conn, error) {
 	return c.DialContext(context.Background())
 }
+
+// 連接服務器返回一個 channel
 func (c *Client) DialContext(ctx context.Context) (conn net.Conn, e error) {
 	ch := make(chan getClientTransport, 1)
 	select {

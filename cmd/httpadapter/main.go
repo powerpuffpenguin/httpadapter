@@ -8,6 +8,8 @@ func main() {
 	root.AddCommand(
 		server(),
 		tunnel(),
+		client(),
+		echo(),
 	)
 	root.Execute()
 }
