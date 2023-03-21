@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"log"
 	"net"
+	"net/http"
 	"path/filepath"
 	"sync"
 
+	"github.com/gin-gonic/gin"
 	"github.com/powerpuffpenguin/httpadapter"
 	"github.com/powerpuffpenguin/httpadapter/pipe"
 	"github.com/spf13/cobra"
@@ -15,11 +17,12 @@ import (
 
 func tunnel() *cobra.Command {
 	var (
+		debug   string
 		cnfpath string
 	)
 	cmd := &cobra.Command{
 		Use:   "tunnel",
-		Short: "create a tunnel with the server port behind the httpadapter",
+		Short: "create a tunnel to httpadapter server backend",
 		Run: func(cmd *cobra.Command, args []string) {
 			cnfs, e := LoadTunnel(cnfpath)
 			if e != nil {
@@ -36,11 +39,24 @@ func tunnel() *cobra.Command {
 				}
 				srvs = append(srvs, srv)
 			}
+			var wait sync.WaitGroup
+			if debug != `` {
+				l, e := net.Listen(`tcp`, debug)
+				if e != nil {
+					log.Fatalln(e)
+				}
+				defer l.Close()
 
-			var (
-				wait sync.WaitGroup
-				pool sync.Pool
-			)
+				engine := gin.Default()
+				mux := registerWeb(engine)
+				wait.Add(1)
+				go func() {
+					http.Serve(l, mux)
+					wait.Done()
+				}()
+			}
+
+			var pool sync.Pool
 			pool.New = func() any {
 				return make([]byte, 1024*32)
 			}
@@ -56,6 +72,7 @@ func tunnel() *cobra.Command {
 	}
 	flags := cmd.Flags()
 	flags.StringVarP(&cnfpath, `cnf`, `c`, filepath.Join(BasePath(), `etc`, `tunnel.jsonnet`), `configure file`)
+	flags.StringVarP(&debug, `debug`, `d`, ``, `if not empty, run debug http server ad this addr. like ':8080'`)
 	return cmd
 }
 

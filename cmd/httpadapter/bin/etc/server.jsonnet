@@ -15,7 +15,7 @@ local Hour                 = 60 * Minute;
 	KeyFile: "",
     Options: {
         // 後端服務地址
-        Backend: "127.0.0.1:80",
+        // Backend: "127.0.0.1:80",
 
         // 服務器窗口大小
         Window: MB * 2,

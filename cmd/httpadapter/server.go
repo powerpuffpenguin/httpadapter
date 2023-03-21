@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/gin-gonic/gin"
 	"github.com/powerpuffpenguin/httpadapter"
 	"github.com/spf13/cobra"
 )
@@ -72,7 +73,9 @@ func server() *cobra.Command {
 				log.Println(`server tcp listen:`, cnf.Listen)
 			}
 			var opts []httpadapter.ServerOption
-			if cnf.Options.Backend != `` {
+			if cnf.Options.Backend == `` {
+				opts = append(opts, httpadapter.ServerHTTP(registerWeb(gin.Default())))
+			} else {
 				opts = append(opts,
 					httpadapter.ServerBackend(
 						httpadapter.NewTCPBackend(cnf.Options.Backend),

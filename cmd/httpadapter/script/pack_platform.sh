@@ -120,6 +120,13 @@ source=(
     "$target"
     etc
 )
+other=()
+if [[ "${GOOS}_$GOARCH" == "linux_amd64" ]];then
+    other=(
+        httpadapter-server.service
+        httpadapter-tunnel.service
+    )
+fi
 exec="${args[@]} ${source[@]}"
 echo $exec
 eval "$exec >> /dev/null"
