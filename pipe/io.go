@@ -5,7 +5,8 @@ import (
 	"time"
 )
 
-func Copy(dst, src io.ReadWriteCloser,
+func Copy(
+	dst io.WriteCloser, src io.ReadCloser,
 	b []byte,
 ) (e error) {
 	if len(b) == 0 {
