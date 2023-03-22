@@ -88,9 +88,10 @@ func (c *Client) newTransport() (t *clientTransport, e error) {
 		return
 	}
 
-	buf := make([]byte, 128)
-	t, e = newClientTransport(conn, buf, c.opts)
+	buf := c.opts.allocator.Get(128)
+	t, e = newClientTransport(conn, buf.Data, c.opts)
 	if e != nil {
+		c.opts.allocator.Put(buf)
 		conn.Close()
 		return
 	}

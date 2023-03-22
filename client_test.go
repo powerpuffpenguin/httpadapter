@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	ebytes "github.com/powerpuffpenguin/easygo/bytes"
 	"github.com/powerpuffpenguin/httpadapter"
 	"github.com/powerpuffpenguin/httpadapter/core"
 	"github.com/stretchr/testify/assert"
@@ -38,27 +37,6 @@ func ServerEcho(duration time.Duration) httpadapter.ServerOption {
 		}
 	}))
 }
-
-var clientAllocator = ebytes.NewPool(
-	[]ebytes.BlockAllocator{
-		ebytes.NewAllocatorPool(1024, true, 1000),
-		ebytes.NewAllocatorPool(1024*2, true, 1000),
-		ebytes.NewAllocatorPool(1024*4, true, 1000),
-		ebytes.NewAllocatorPool(1024*8, true, 1000),
-		ebytes.NewAllocatorPool(1024*16, true, 1000),
-		ebytes.NewAllocatorPool(1024*32, true, 1000),
-	},
-	ebytes.PoolBeforeGet(func(size int) []byte {
-		if size < 1024 || size > 1024*32 {
-			return make([]byte, size)
-		}
-		return nil
-	}),
-	ebytes.PoolBeforePut(func(b []byte) bool {
-		size := len(b)
-		return size < 1024 || size > 1024*32
-	}),
-)
 
 func TestClient(t *testing.T) {
 	testClient(t)

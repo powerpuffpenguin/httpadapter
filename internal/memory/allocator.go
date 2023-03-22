@@ -20,9 +20,9 @@ type BufferAllocator struct {
 	Allocator BytesAllocator
 }
 
-func (a BufferAllocator) Put(b Buffer) {
-	if a.Allocator != nil && b.Buffer != nil {
-		a.Allocator.Put(b.Buffer)
+func (a BufferAllocator) Put(buffer Buffer) {
+	if a.Allocator != nil && buffer.Buffer != nil {
+		a.Allocator.Put(buffer.Buffer)
 	}
 }
 func (a BufferAllocator) Get(size int) Buffer {
