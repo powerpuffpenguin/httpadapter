@@ -144,11 +144,15 @@ func (s *Server) serve(l *httpListner, rw net.Conn) {
 	var (
 		backend net.Conn
 		e       error
-		b       = make([]byte, 256)
+		buffer  = s.opts.allocator.Get(256)
+		b       = buffer.Data
 		code    core.Hello
 		version string
 		window  uint32
 	)
+	if buffer.Buffer != nil {
+		defer s.opts.allocator.Put(buffer)
+	}
 	if s.opts.timeout > 0 {
 		timer := time.NewTimer(s.opts.timeout)
 		ch := make(chan *asyncHello, 1)
@@ -186,8 +190,15 @@ func (s *Server) serve(l *httpListner, rw net.Conn) {
 		if s.opts.backend != nil {
 			dst, e := s.opts.backend.Dial()
 			if e == nil {
-				go pipe.Copy(dst, backend, nil)
-				pipe.Copy(backend, dst, nil)
+				b0 := s.opts.allocator.Get(1024 * 32)
+				b1 := s.opts.allocator.Get(1024 * 32)
+				go func() {
+					pipe.Copy(dst, backend, b0.Data)
+					s.opts.allocator.Put(b0)
+				}()
+				pipe.Copy(backend, dst, b1.Data)
+				s.opts.allocator.Put(b1)
+				buffer.Buffer = nil
 			} else {
 				backend.Close()
 			}
@@ -197,6 +208,7 @@ func (s *Server) serve(l *httpListner, rw net.Conn) {
 		if l != nil {
 			select {
 			case l.ch <- backend:
+				buffer.Buffer = nil
 				return
 			case <-l.done:
 				backend.Close()
@@ -205,6 +217,7 @@ func (s *Server) serve(l *httpListner, rw net.Conn) {
 		}
 		// 返回協議未知
 		e = s.sendHello(rw, b, core.HelloInvalidProtocol, ``)
+		s.opts.allocator.Put(buffer)
 		if e != nil {
 			rw.Close()
 			return
@@ -216,6 +229,7 @@ func (s *Server) serve(l *httpListner, rw net.Conn) {
 	// 連接成功
 	e = s.sendHello(rw, b, code, version)
 	if e != nil || code != 0 {
+		s.opts.allocator.Put(buffer)
 		rw.Close()
 		return
 	}
@@ -223,14 +237,9 @@ func (s *Server) serve(l *httpListner, rw net.Conn) {
 	// 執行轉發
 	newServerTransport(s,
 		rw,
-		int(s.opts.window), int(window),
+		window,
 		s.opts.channelHandler,
-	).Serve(
-		b,
-		s.opts.readBuffer, s.opts.writeBuffer,
-		s.opts.channels,
-		s.opts.ping,
-	)
+	).Serve(buffer)
 }
 func (s *Server) sendHello(rw net.Conn, b []byte, hello core.Hello, version string) (e error) {
 	msg := core.ServerHello{

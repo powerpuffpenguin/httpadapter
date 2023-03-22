@@ -140,6 +140,12 @@ func (t *baseTransport) onPong(r io.Reader, buf []byte) (exit bool) {
 	}
 	buffer := t.allocator.Get(5)
 	copy(buffer.Data, buf[:5])
+	t.postWrite(buffer)
+	return
+}
+
+// 投遞一個數據
+func (t *baseTransport) postWrite(buffer memory.Buffer) (exit bool) {
 	select {
 	case <-t.done:
 		t.allocator.Put(buffer)

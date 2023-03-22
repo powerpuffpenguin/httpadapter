@@ -68,7 +68,7 @@ func ReadClientHello(r io.Reader, buf []byte) (hello ClientHello,
 	bufsize := len(buf)
 	autobuf := bufsize == 0
 	if autobuf {
-		buf = make([]byte, 128)
+		buf = make([]byte, 256)
 		bufsize = len(buf)
 	} else if bufsize < flagsize /* || bufsize < 4*/ {
 		e = io.ErrShortBuffer

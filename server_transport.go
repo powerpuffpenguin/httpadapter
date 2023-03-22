@@ -5,82 +5,67 @@ import (
 	"io"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/powerpuffpenguin/httpadapter/core"
+	"github.com/powerpuffpenguin/httpadapter/internal/memory"
 )
 
 type serverTransport struct {
-	server               *Server
-	c                    net.Conn
-	window, remoteWindow int
-	handler              Handler
-	done                 chan struct{}
-	closed               int32
+	server  *Server
+	handler Handler
 	sync.Mutex
 	keys map[uint64]*dataChannel
-	ch   chan []byte
+	baseTransport
 }
 
 func newServerTransport(server *Server,
 	c net.Conn,
-	window, remoteWindow int,
+	window uint32,
 	handler Handler,
 ) *serverTransport {
 	return &serverTransport{
-		server:       server,
-		c:            c,
-		window:       window,
-		remoteWindow: remoteWindow,
-		handler:      handler,
-		done:         make(chan struct{}),
-		keys:         make(map[uint64]*dataChannel),
-		ch:           make(chan []byte, 100),
+		server:  server,
+		handler: handler,
+		keys:    make(map[uint64]*dataChannel),
+		baseTransport: baseTransport{
+			allocator: server.opts.allocator,
+			done:      make(chan struct{}),
+			window:    window,
+			c:         c,
+			ch:        make(chan memory.Buffer, 50),
+		},
 	}
 }
-func (t *serverTransport) Close() {
-	if t.closed == 0 && atomic.SwapInt32(&t.closed, 1) == 0 {
-		close(t.done)
-		t.c.Close()
-	}
-}
-func (t *serverTransport) Serve(b []byte,
-	readBuffer, writeBuffer,
-	channels int,
-	ping time.Duration,
-) {
-	defer t.Close()
+
+func (t *serverTransport) Serve(buffer memory.Buffer) {
+	defer func() {
+		t.Close()
+		t.server.opts.allocator.Put(buffer)
+	}()
 
 	var (
 		r          io.Reader = t.c
 		e          error
-		ch         = t.ch
 		localAddr  = t.c.LocalAddr()
 		remoteAddr = t.c.RemoteAddr()
 		active     chan int
 	)
-	if readBuffer > 0 {
-		r = bufio.NewReaderSize(r, readBuffer)
+	// 建立讀取緩存
+	if t.server.opts.readBuffer > 0 {
+		r = bufio.NewReaderSize(r, t.server.opts.readBuffer)
 	}
 
 	// ping
-	if ping > time.Second {
+	if t.server.opts.ping > time.Second {
 		active = make(chan int, 1)
-		go core.Ping(
-			ping,
-			t.done, active,
-			ch,
-			[]byte{byte(core.CommandPing)},
-		)
+		go t.servePing(active, t.server.opts.ping)
 	}
 
 	// 寫入 tcp-chain
-	go core.Write(t.c, writeBuffer,
-		t.done, active,
-		ch,
-	)
+	go t.serveWrite(active, t.server.opts.writeBuffer)
 
+	b := buffer.Data
 	// 讀取 tcp-chain
 TS:
 	for {
@@ -100,7 +85,7 @@ TS:
 		switch cmd {
 		case core.CommandPing:
 		case core.CommandPong: // 響應 pong
-			if onPong(r, b, t.done, ch) {
+			if t.onPong(r, b) {
 				break TS
 			}
 		case core.CommandCreate: // 創建 channel
@@ -110,28 +95,28 @@ TS:
 			}
 			id := core.ByteOrder.Uint64(b)
 
-			data := make([]byte, 1+8+1)
-			data[0] = byte(core.CommandCreate)
-			core.ByteOrder.PutUint64(data[1:], id)
+			data := t.server.opts.allocator.Get(1 + 8 + 1)
+			data.Data[0] = byte(core.CommandCreate)
+			core.ByteOrder.PutUint64(data.Data[1:], id)
 
 			t.Lock()
 			_, exists := t.keys[id]
 			if exists {
-				data[1+8] = 1
-			} else if channels > 0 && len(t.keys) >= channels {
-				data[1+8] = 2
+				data.Data[1+8] = 1
+			} else if t.server.opts.channels > 0 && len(t.keys) >= t.server.opts.channels {
+				data.Data[1+8] = 2
 			} else {
 				val := newChannel(t, id,
 					localAddr, remoteAddr,
-					t.window, t.remoteWindow,
+					int(t.server.opts.window), int(t.window),
 				)
 				go val.Serve()
 				go t.handler.ServeChannel(t.server, val)
 				t.keys[id] = val
-				data[1+8] = 0
+				data.Data[1+8] = 0
 			}
 			t.Unlock()
-			if core.PostWrite(t.done, t.ch, data) {
+			if t.postWrite(data) {
 				break TS
 			}
 		case core.CommandClose: // 客戶端要求關閉 channel

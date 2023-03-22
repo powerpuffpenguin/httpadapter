@@ -85,7 +85,10 @@ func newClientTransport(c net.Conn, buf []byte, opts *clientOptions) (t *clientT
 }
 
 func (t *clientTransport) Serve(buffer memory.Buffer) {
-	defer t.Close()
+	defer func() {
+		t.Close()
+		t.opts.allocator.Put(buffer)
+	}()
 	var (
 		r          io.Reader = t.c
 		e          error
