@@ -26,3 +26,4 @@ var clientAllocator = bytes.NewPool(
 		return size < 1 || size > 1024*32
 	}),
 )
+var defaultAllocator = clientAllocator

@@ -16,11 +16,19 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestClientWebsocket(t *testing.T) {
-	testClientWebsocket(t)
-	testClientWebsocket(t, httpadapter.WithAllocator(clientAllocator))
+func Options[T any](opts ...T) []T {
+	return opts
 }
-func testClientWebsocket(t *testing.T, opts ...httpadapter.ClientOption) {
+func TestClientWebsocket(t *testing.T) {
+	testClientWebsocket(t, nil, nil)
+	testClientWebsocket(t, Options(httpadapter.WithAllocator(defaultAllocator)), nil)
+	testClientWebsocket(t, nil, Options(httpadapter.ServerAllocator(defaultAllocator)))
+	testClientWebsocket(t, Options(httpadapter.WithAllocator(defaultAllocator)), Options(httpadapter.ServerAllocator(defaultAllocator)))
+}
+func testClientWebsocket(t *testing.T,
+	opts []httpadapter.ClientOption,
+	serverOpts []httpadapter.ServerOption,
+) {
 	var upgrader = websocket.Upgrader{}
 	mux := http.NewServeMux()
 	var step int64
@@ -72,8 +80,10 @@ func testClientWebsocket(t *testing.T, opts ...httpadapter.ClientOption) {
 	})
 
 	s := newServer(t,
-		httpadapter.ServerWindow(4),
-		httpadapter.ServerHTTP(mux),
+		append(serverOpts,
+			httpadapter.ServerWindow(4),
+			httpadapter.ServerHTTP(mux),
+		)...,
 	)
 	defer s.CloseAndWait()
 

@@ -328,3 +328,8 @@ func (s *Server) Ping() time.Duration {
 func (s *Server) TCPDialer() TCPDialer {
 	return s.opts.tcpDialer
 }
+
+// 返回服務器如何分配內存
+func (s *Server) Allocator() Allocator {
+	return s.opts.allocator.Allocator
+}

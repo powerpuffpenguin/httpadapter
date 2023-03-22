@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/powerpuffpenguin/easygo/option"
+	"github.com/powerpuffpenguin/httpadapter/internal/memory"
 )
 
 var defaultServerOptions = serverOptions{
@@ -18,6 +19,7 @@ var defaultServerOptions = serverOptions{
 	channels:       0,
 	channelHandler: defaultHandler,
 	tcpDialer:      DefaultTCPDialer{},
+	allocator:      defaultAllocator,
 }
 
 type serverOptions struct {
@@ -31,6 +33,7 @@ type serverOptions struct {
 	channelHandler Handler
 	ping           time.Duration
 	tcpDialer      TCPDialer
+	allocator      memory.BufferAllocator
 }
 type tcpTCPDialerFunc struct {
 	f func(ctx context.Context, addr string, tls bool) (net.Conn, error)
@@ -163,6 +166,17 @@ func ServerTCPDialer(dialer TCPDialer) ServerOption {
 			opts.tcpDialer = DefaultTCPDialer{}
 		} else {
 			opts.tcpDialer = dialer
+		}
+	})
+}
+
+// 設置服務器如何分配內存
+func ServerAllocator(allocator Allocator) ServerOption {
+	return option.New(func(opts *serverOptions) {
+		if allocator == nil {
+			opts.allocator = defaultAllocator
+		} else {
+			opts.allocator = memory.BufferAllocator{Allocator: allocator}
 		}
 	})
 }

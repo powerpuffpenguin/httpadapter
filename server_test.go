@@ -146,7 +146,17 @@ var testErrors = []struct {
 }
 
 func TestServer(t *testing.T) {
-	s := newServer(t)
+	testServer(t, nil, nil)
+	testServer(t, Options(httpadapter.WithAllocator(defaultAllocator)), nil)
+	testServer(t, nil, Options(httpadapter.ServerAllocator(defaultAllocator)))
+	testServer(t, Options(httpadapter.WithAllocator(defaultAllocator)), Options(httpadapter.ServerAllocator(defaultAllocator)))
+
+}
+func testServer(t *testing.T,
+	opts []httpadapter.ClientOption,
+	serverOpts []httpadapter.ServerOption,
+) {
+	s := newServer(t, serverOpts...)
 	defer s.CloseAndWait()
 
 	for _, node := range testErrors {

@@ -39,13 +39,19 @@ func ServerEcho(duration time.Duration) httpadapter.ServerOption {
 }
 
 func TestClient(t *testing.T) {
-	testClient(t)
-	testClient(t, httpadapter.WithAllocator(clientAllocator))
+	testClient(t, nil, nil)
+	testClient(t, Options(httpadapter.WithAllocator(defaultAllocator)), nil)
+	testClient(t, nil, Options(httpadapter.ServerAllocator(defaultAllocator)))
+	testClient(t, Options(httpadapter.WithAllocator(defaultAllocator)), Options(httpadapter.ServerAllocator(defaultAllocator)))
 }
-func testClient(t *testing.T, opts ...httpadapter.ClientOption) {
+func testClient(t *testing.T,
+	opts []httpadapter.ClientOption,
+	serverOpts []httpadapter.ServerOption,
+) {
 	s := newServer(t,
-		ServerEcho(0),
-		httpadapter.ServerWindow(4),
+		append(serverOpts, ServerEcho(0),
+			httpadapter.ServerWindow(4),
+		)...,
 	)
 	defer s.CloseAndWait()
 
@@ -77,13 +83,20 @@ func testClient(t *testing.T, opts ...httpadapter.ClientOption) {
 	}
 }
 func TestClientSleep(t *testing.T) {
-	testClientSleep(t)
-	testClientSleep(t, httpadapter.WithAllocator(clientAllocator))
+	testClientSleep(t, nil, nil)
+	testClientSleep(t, Options(httpadapter.WithAllocator(defaultAllocator)), nil)
+	testClientSleep(t, nil, Options(httpadapter.ServerAllocator(defaultAllocator)))
+	testClientSleep(t, Options(httpadapter.WithAllocator(defaultAllocator)), Options(httpadapter.ServerAllocator(defaultAllocator)))
 }
-func testClientSleep(t *testing.T, opts ...httpadapter.ClientOption) {
+func testClientSleep(t *testing.T,
+	opts []httpadapter.ClientOption,
+	serverOpts []httpadapter.ServerOption,
+) {
 	s := newServer(t,
-		ServerEcho(time.Millisecond),
-		httpadapter.ServerWindow(4),
+		append(serverOpts,
+			ServerEcho(time.Millisecond),
+			httpadapter.ServerWindow(4),
+		)...,
 	)
 	defer s.CloseAndWait()
 
@@ -116,10 +129,15 @@ func testClientSleep(t *testing.T, opts ...httpadapter.ClientOption) {
 
 }
 func TestClientHttp(t *testing.T) {
-	testClientHttp(t)
-	testClientHttp(t, httpadapter.WithAllocator(clientAllocator))
+	testClientHttp(t, nil, nil)
+	testClientHttp(t, Options(httpadapter.WithAllocator(defaultAllocator)), nil)
+	testClientHttp(t, nil, Options(httpadapter.ServerAllocator(defaultAllocator)))
+	testClientHttp(t, Options(httpadapter.WithAllocator(defaultAllocator)), Options(httpadapter.ServerAllocator(defaultAllocator)))
 }
-func testClientHttp(t *testing.T, opts ...httpadapter.ClientOption) {
+func testClientHttp(t *testing.T,
+	opts []httpadapter.ClientOption,
+	serverOpts []httpadapter.ServerOption,
+) {
 	mux := http.NewServeMux()
 	mux.HandleFunc(`/version`, func(w http.ResponseWriter, r *http.Request) {
 		for _, v := range r.Header.Values(`Accept`) {
@@ -140,8 +158,10 @@ func testClientHttp(t *testing.T, opts ...httpadapter.ClientOption) {
 	})
 
 	s := newServer(t,
-		httpadapter.ServerWindow(4),
-		httpadapter.ServerHTTP(mux),
+		append(serverOpts,
+			httpadapter.ServerWindow(4),
+			httpadapter.ServerHTTP(mux),
+		)...,
 	)
 	defer s.CloseAndWait()
 	client := httpadapter.NewClient(Addr, opts...)
@@ -248,10 +268,15 @@ func checkClientHttpBody(t *testing.T, resp *httpadapter.MessageResponse, e erro
 
 }
 func TestClientHttpBody(t *testing.T) {
-	testClientHttpBody(t)
-	testClientHttpBody(t, httpadapter.WithAllocator(clientAllocator))
+	testClientHttpBody(t, nil, nil)
+	testClientHttpBody(t, Options(httpadapter.WithAllocator(defaultAllocator)), nil)
+	testClientHttpBody(t, nil, Options(httpadapter.ServerAllocator(defaultAllocator)))
+	testClientHttpBody(t, Options(httpadapter.WithAllocator(defaultAllocator)), Options(httpadapter.ServerAllocator(defaultAllocator)))
 }
-func testClientHttpBody(t *testing.T, opts ...httpadapter.ClientOption) {
+func testClientHttpBody(t *testing.T,
+	opts []httpadapter.ClientOption,
+	serverOpts []httpadapter.ServerOption,
+) {
 	mux := http.NewServeMux()
 	mux.HandleFunc(`/add`, func(w http.ResponseWriter, r *http.Request) {
 		var val int
@@ -293,8 +318,10 @@ func testClientHttpBody(t *testing.T, opts ...httpadapter.ClientOption) {
 	})
 
 	s := newServer(t,
-		httpadapter.ServerWindow(4),
-		httpadapter.ServerHTTP(mux),
+		append(serverOpts,
+			httpadapter.ServerWindow(4),
+			httpadapter.ServerHTTP(mux),
+		)...,
 	)
 	defer s.CloseAndWait()
 
