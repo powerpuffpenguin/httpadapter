@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/powerpuffpenguin/easygo/option"
+	"github.com/powerpuffpenguin/httpadapter/internal/memory"
 )
 
 var defaultClientOptions = clientOptions{
@@ -12,6 +13,7 @@ var defaultClientOptions = clientOptions{
 	readBuffer:  4096,
 	writeBuffer: 4096,
 	dialer:      &net.Dialer{},
+	allocator:   defaultAllocator,
 }
 
 type clientOptions struct {
@@ -23,6 +25,8 @@ type clientOptions struct {
 	ping time.Duration
 
 	dialer ClientDialer
+
+	allocator memory.BufferAllocator
 }
 type ClientDialer interface {
 	Dial(network, address string) (net.Conn, error)
@@ -65,5 +69,16 @@ func WithPing(ping time.Duration) ClientOption {
 func WithDialer(dialer ClientDialer) ClientOption {
 	return option.New(func(opts *clientOptions) {
 		opts.dialer = dialer
+	})
+}
+
+// 設置如何分配內存
+func WithAllocator(allocator Allocator) ClientOption {
+	return option.New(func(opts *clientOptions) {
+		if allocator == nil {
+			opts.allocator = defaultAllocator
+		} else {
+			opts.allocator = memory.BufferAllocator{Allocator: allocator}
+		}
 	})
 }

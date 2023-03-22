@@ -170,3 +170,8 @@ func (c *Client) Ping() time.Duration {
 func (c *Client) Dialer() ClientDialer {
 	return c.opts.dialer
 }
+
+// 返回客戶端如何分配內存
+func (c *Client) Allocator() Allocator {
+	return c.opts.allocator.Allocator
+}

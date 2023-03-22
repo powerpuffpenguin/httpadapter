@@ -20,6 +20,10 @@ import (
 )
 
 func TestClientTCP(t *testing.T) {
+	testClientTCP(t)
+	testClientTCP(t, httpadapter.WithAllocator(clientAllocator))
+}
+func testClientTCP(t *testing.T, opts ...httpadapter.ClientOption) {
 	var upgrader = websocket.Upgrader{}
 	mux := http.NewServeMux()
 	var step int64
@@ -117,7 +121,7 @@ func TestClientTCP(t *testing.T) {
 	)
 	defer s.CloseAndWait()
 
-	client := httpadapter.NewClient(Addr)
+	client := httpadapter.NewClient(Addr, opts...)
 	defer client.Close()
 	ws, resp, e := client.Websocket(context.Background(),
 		BaseWebsocket+`/ws`,

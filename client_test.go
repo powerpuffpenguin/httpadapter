@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	ebytes "github.com/powerpuffpenguin/easygo/bytes"
 	"github.com/powerpuffpenguin/httpadapter"
 	"github.com/powerpuffpenguin/httpadapter/core"
 	"github.com/stretchr/testify/assert"
@@ -38,14 +39,39 @@ func ServerEcho(duration time.Duration) httpadapter.ServerOption {
 	}))
 }
 
+var clientAllocator = ebytes.NewPool(
+	[]ebytes.BlockAllocator{
+		ebytes.NewAllocatorPool(1024, true, 1000),
+		ebytes.NewAllocatorPool(1024*2, true, 1000),
+		ebytes.NewAllocatorPool(1024*4, true, 1000),
+		ebytes.NewAllocatorPool(1024*8, true, 1000),
+		ebytes.NewAllocatorPool(1024*16, true, 1000),
+		ebytes.NewAllocatorPool(1024*32, true, 1000),
+	},
+	ebytes.PoolBeforeGet(func(size int) []byte {
+		if size < 1024 || size > 1024*32 {
+			return make([]byte, size)
+		}
+		return nil
+	}),
+	ebytes.PoolBeforePut(func(b []byte) bool {
+		size := len(b)
+		return size < 1024 || size > 1024*32
+	}),
+)
+
 func TestClient(t *testing.T) {
+	testClient(t)
+	testClient(t, httpadapter.WithAllocator(clientAllocator))
+}
+func testClient(t *testing.T, opts ...httpadapter.ClientOption) {
 	s := newServer(t,
 		ServerEcho(0),
 		httpadapter.ServerWindow(4),
 	)
 	defer s.CloseAndWait()
 
-	client := httpadapter.NewClient(Addr)
+	client := httpadapter.NewClient(Addr, opts...)
 	defer client.Close()
 
 	for i := 0; i < 10; i++ {
@@ -73,13 +99,17 @@ func TestClient(t *testing.T) {
 	}
 }
 func TestClientSleep(t *testing.T) {
+	testClientSleep(t)
+	testClientSleep(t, httpadapter.WithAllocator(clientAllocator))
+}
+func testClientSleep(t *testing.T, opts ...httpadapter.ClientOption) {
 	s := newServer(t,
 		ServerEcho(time.Millisecond),
 		httpadapter.ServerWindow(4),
 	)
 	defer s.CloseAndWait()
 
-	client := httpadapter.NewClient(Addr)
+	client := httpadapter.NewClient(Addr, opts...)
 	defer client.Close()
 
 	for i := 0; i < 10; i++ {
@@ -107,8 +137,11 @@ func TestClientSleep(t *testing.T) {
 	}
 
 }
-
 func TestClientHttp(t *testing.T) {
+	testClientHttp(t)
+	testClientHttp(t, httpadapter.WithAllocator(clientAllocator))
+}
+func testClientHttp(t *testing.T, opts ...httpadapter.ClientOption) {
 	mux := http.NewServeMux()
 	mux.HandleFunc(`/version`, func(w http.ResponseWriter, r *http.Request) {
 		for _, v := range r.Header.Values(`Accept`) {
@@ -133,7 +166,7 @@ func TestClientHttp(t *testing.T) {
 		httpadapter.ServerHTTP(mux),
 	)
 	defer s.CloseAndWait()
-	client := httpadapter.NewClient(Addr)
+	client := httpadapter.NewClient(Addr, opts...)
 	defer client.Close()
 
 	// bad gateway
@@ -237,6 +270,10 @@ func checkClientHttpBody(t *testing.T, resp *httpadapter.MessageResponse, e erro
 
 }
 func TestClientHttpBody(t *testing.T) {
+	testClientHttpBody(t)
+	testClientHttpBody(t, httpadapter.WithAllocator(clientAllocator))
+}
+func testClientHttpBody(t *testing.T, opts ...httpadapter.ClientOption) {
 	mux := http.NewServeMux()
 	mux.HandleFunc(`/add`, func(w http.ResponseWriter, r *http.Request) {
 		var val int
@@ -283,7 +320,7 @@ func TestClientHttpBody(t *testing.T) {
 	)
 	defer s.CloseAndWait()
 
-	client := httpadapter.NewClient(Addr)
+	client := httpadapter.NewClient(Addr, opts...)
 	defer client.Close()
 
 	resp, e := client.Unary(context.Background(), &httpadapter.MessageRequest{
