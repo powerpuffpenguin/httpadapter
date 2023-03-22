@@ -148,14 +148,13 @@ func (t *TunnelServer) Serve(pool *sync.Pool) {
 			}
 			b0 := pool.Get()
 			b1 := pool.Get()
-			defer func() {
-				pool.Put(b0)
-				pool.Put(b1)
-				c.Close()
-			}()
 
-			go pipe.Copy(c0, c, b0.([]byte))
+			go func() {
+				pipe.Copy(c0, c, b0.([]byte))
+				pool.Put(b0)
+			}()
 			pipe.Copy(c, c0, b1.([]byte))
+			pool.Put(b1)
 		}(c)
 	}
 }

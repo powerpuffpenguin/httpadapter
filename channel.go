@@ -2,6 +2,7 @@ package httpadapter
 
 import (
 	"context"
+	"math"
 	"net"
 	"sync/atomic"
 	"time"
@@ -297,10 +298,12 @@ func (c *dataChannel) Confirm(val int) (overflow bool) {
 }
 func (c *dataChannel) serveConfirm() {
 	var (
-		v0, v1 int
-		window = c.remoteWindow
-		done   = c.t.Done()
-		ch     = c.t.getWriter()
+		confirmed, ok uint64
+		val           int
+		window        = uint64(c.remoteWindow / 10)
+		done          = c.t.Done()
+		ch            = c.t.getWriter()
+		data          []byte
 	)
 	for {
 		select {
@@ -308,38 +311,52 @@ func (c *dataChannel) serveConfirm() {
 			return
 		case <-done:
 			return
-		case v0 = <-c.sendConfirm:
+		case val = <-c.sendConfirm:
+			confirmed = uint64(val)
 		}
 
 	CSF:
-		for v0 < window {
+		for confirmed < window {
 			select {
 			case <-c.ctx.Done():
 				return
 			case <-done:
 				return
-			case v1 = <-c.sendConfirm:
-				v0 += v1
+			case val = <-c.sendConfirm:
+				confirmed += uint64(val)
 			default:
 				break CSF
 			}
 		}
-		data := make([]byte, 1+8+2)
-		data[0] = 6
-		core.ByteOrder.PutUint64(data[1:], c.id)
-		core.ByteOrder.PutUint16(data[1+8:], uint16(v0))
-		select {
-		case <-c.ctx.Done():
-			return
-		case <-done:
-			return
-		case ch <- data:
+
+		for confirmed != 0 {
+			if len(data) == 0 {
+				data = make([]byte, 11*2900)
+			}
+			ok = confirmed
+			if ok > math.MaxUint16 {
+				ok = math.MaxUint16
+			} else {
+				ok = confirmed
+			}
+			data[0] = 6
+			core.ByteOrder.PutUint64(data[1:], c.id)
+			core.ByteOrder.PutUint16(data[1+8:], uint16(ok))
+			select {
+			case <-c.ctx.Done():
+				return
+			case <-done:
+				return
+			case ch <- data[:11]:
+				data = data[11:]
+				confirmed -= ok
+			}
 		}
 	}
 }
 func (c *dataChannel) Read(b []byte) (n int, e error) {
 	n, e = c.pipe.Read(b)
-	if e == nil && n != 0 {
+	if n != 0 {
 		select {
 		case c.sendConfirm <- n:
 		case <-c.ctx.Done():
