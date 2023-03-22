@@ -4,6 +4,7 @@ import "github.com/powerpuffpenguin/easygo/bytes"
 
 var clientAllocator = bytes.NewPool(
 	[]bytes.BlockAllocator{
+		bytes.NewAllocatorPool(32, true, 1000),
 		bytes.NewAllocatorPool(128, true, 1000),
 		bytes.NewAllocatorPool(256, true, 1000),
 		bytes.NewAllocatorPool(512, true, 1000),
@@ -15,13 +16,13 @@ var clientAllocator = bytes.NewPool(
 		bytes.NewAllocatorPool(1024*32, true, 1000),
 	},
 	bytes.PoolBeforeGet(func(size int) []byte {
-		if size < 128 || size > 1024*32 {
+		if size < 1 || size > 1024*32 {
 			return make([]byte, size)
 		}
 		return nil
 	}),
 	bytes.PoolBeforePut(func(b []byte) bool {
 		size := len(b)
-		return size < 128 || size > 1024*32
+		return size < 1 || size > 1024*32
 	}),
 )

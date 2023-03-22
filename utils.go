@@ -23,6 +23,7 @@ func onPong(r io.Reader, buf []byte,
 		return
 	case w <- data:
 		return
+	default:
 	}
 	exit = core.PostWrite(done, w, data)
 	return

@@ -3,11 +3,11 @@ package httpadapter
 import (
 	"context"
 	"errors"
-	"io"
 	"net/http"
 	"net/url"
 
 	"github.com/powerpuffpenguin/httpadapter/core"
+	"github.com/powerpuffpenguin/httpadapter/internal/pipe"
 )
 
 // 請求代理訪問一個 websocket
@@ -28,15 +28,17 @@ func (c *Client) Websocket(ctx context.Context, u string, header http.Header) (w
 		return
 	} else if resp.Status != http.StatusSwitchingProtocols {
 		defer cc.Close()
-		var b []byte
-		b, e = io.ReadAll(io.LimitReader(resp.Body, 256))
+		buffer := c.opts.allocator.Get(256)
+		var n int
+		n, e = pipe.ReadAll(resp.Body, buffer.Data)
 		if e == nil {
-			if len(b) == 0 {
+			if n == 0 {
 				e = errors.New(`switching protocols error`)
 			} else {
-				e = errors.New(string(b))
+				e = errors.New(string(buffer.Data[:n]))
 			}
 		}
+		c.opts.allocator.Put(buffer)
 		return
 	}
 	ws = &Websocket{c: cc}
