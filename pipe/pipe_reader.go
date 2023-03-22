@@ -1,4 +1,4 @@
-package httpadapter
+package pipe
 
 import (
 	"errors"
@@ -7,9 +7,9 @@ import (
 	"sync/atomic"
 )
 
-var errPipeReaderClosed = errors.New(`httpadapter: PipeReader closed`)
+var ErrReaderClosed = errors.New(`PipeReader closed`)
 
-type pipeReader struct {
+type PipeReader struct {
 	rw *ReadWriter
 
 	cond   *sync.Cond
@@ -17,14 +17,14 @@ type pipeReader struct {
 	wait   int
 }
 
-func newPipeReader(size int) (pipe *pipeReader) {
-	pipe = &pipeReader{
+func NewPipeReader(size int) (pipe *PipeReader) {
+	pipe = &PipeReader{
 		rw:   NewReadWriter(make([]byte, size)),
 		cond: sync.NewCond(&sync.Mutex{}),
 	}
 	return
 }
-func (p *pipeReader) Close() {
+func (p *PipeReader) Close() {
 	if p.closed == 0 && atomic.SwapInt32(&p.closed, 1) == 0 {
 		p.cond.L.Lock()
 		defer p.cond.L.Unlock()
@@ -35,12 +35,12 @@ func (p *pipeReader) Close() {
 		}
 	}
 }
-func (p *pipeReader) Write(b []byte) (n int, e error) {
+func (p *PipeReader) Write(b []byte) (n int, e error) {
 	p.cond.L.Lock()
 	defer p.cond.L.Unlock()
 	// 檢測關閉
 	if p.closed != 0 {
-		e = errPipeReaderClosed
+		e = ErrReaderClosed
 		return
 	}
 	// 寫入數據
@@ -55,7 +55,7 @@ func (p *pipeReader) Write(b []byte) (n int, e error) {
 	}
 	return
 }
-func (p *pipeReader) Read(b []byte) (n int, e error) {
+func (p *PipeReader) Read(b []byte) (n int, e error) {
 	p.cond.L.Lock()
 	defer p.cond.L.Unlock()
 	// 檢測關閉

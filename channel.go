@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/powerpuffpenguin/httpadapter/core"
+	"github.com/powerpuffpenguin/httpadapter/pipe"
 )
 
 type Conn interface {
@@ -27,7 +28,7 @@ type dataChannel struct {
 	closed        int32
 	ctx           *channelContext
 	write         chan []byte
-	pipe          *pipeReader
+	pipe          *pipe.PipeReader
 	remoteWindow  int
 	confirm       chan int
 	sendConfirm   chan int
@@ -48,7 +49,7 @@ func newChannel(t dataTransport,
 		remoteAddr:   remoteAddr,
 		ctx:          newChannelContext(),
 		write:        make(chan []byte),
-		pipe:         newPipeReader(window),
+		pipe:         pipe.NewPipeReader(window),
 		remoteWindow: remoteWindow,
 		confirm:      make(chan int, 1),
 		sendConfirm:  make(chan int, 10),

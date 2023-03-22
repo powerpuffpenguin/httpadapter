@@ -1,16 +1,16 @@
-package httpadapter_test
+package pipe_test
 
 import (
 	"io"
 	"testing"
 
-	"github.com/powerpuffpenguin/httpadapter"
+	"github.com/powerpuffpenguin/httpadapter/pipe"
 	"github.com/stretchr/testify/assert"
 )
 
 type helperReadWriter struct {
 	t  *testing.T
-	rw *httpadapter.ReadWriter
+	rw *pipe.ReadWriter
 }
 
 func (h *helperReadWriter) MustWriteString(s string) int {
@@ -41,7 +41,7 @@ func (h *helperReadWriter) WriteStringError(s string, e error) {
 func TestReadWriter(t *testing.T) {
 	buffer := make([]byte, 5)
 	copy(buffer, []byte("aaaaa"))
-	rw := httpadapter.NewReadWriter(buffer)
+	rw := pipe.NewReadWriter(buffer)
 	h := &helperReadWriter{
 		t:  t,
 		rw: rw,
@@ -69,7 +69,7 @@ func TestReadWriter(t *testing.T) {
 		t.FailNow()
 	}
 
-	h.WriteStringError("56", httpadapter.ErrWriteOverflow)
+	h.WriteStringError("56", pipe.ErrWriteOverflow)
 	if !assert.Equal(t, size, rw.Len()) {
 		t.FailNow()
 	}
@@ -105,7 +105,7 @@ func TestReadWriter(t *testing.T) {
 func TestReadWriterLoop(t *testing.T) {
 	buffer := make([]byte, 5)
 	copy(buffer, []byte("aaaaa"))
-	rw := httpadapter.NewReadWriter(buffer)
+	rw := pipe.NewReadWriter(buffer)
 	h := &helperReadWriter{
 		t:  t,
 		rw: rw,

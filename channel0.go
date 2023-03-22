@@ -9,6 +9,7 @@ import (
 
 	"github.com/powerpuffpenguin/httpadapter/core"
 	"github.com/powerpuffpenguin/httpadapter/internal/memory"
+	"github.com/powerpuffpenguin/httpadapter/pipe"
 )
 
 type ioTransport interface {
@@ -35,7 +36,7 @@ type ioChannel struct {
 	write chan memory.Buffer
 
 	// 讀寫管道
-	pipe *pipeReader
+	pipe *pipe.PipeReader
 	// 對面窗口
 	remoteWindow uint64
 	// 收到確認包
@@ -64,7 +65,7 @@ func newIOChannel(transport ioTransport,
 		ctx:          ctx,
 		cancel:       cancel,
 		write:        make(chan memory.Buffer),
-		pipe:         newPipeReader(window),
+		pipe:         pipe.NewPipeReader(window),
 		remoteWindow: uint64(remoteWindow),
 		confirm:      make(chan uint64, 1),
 		sendConfirm:  make(chan int, 10),
