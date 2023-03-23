@@ -88,10 +88,9 @@ func (c *Client) newTransport() (t *clientTransport, e error) {
 		return
 	}
 
-	buf := c.opts.allocator.Get(128)
-	t, e = newClientTransport(conn, buf.Data, c.opts)
+	buf := make([]byte, 128)
+	t, e = newClientTransport(conn, buf, c.opts)
 	if e != nil {
-		c.opts.allocator.Put(buf)
 		conn.Close()
 		return
 	}
@@ -170,9 +169,4 @@ func (c *Client) Ping() time.Duration {
 // 返回客戶端如何連接服務器
 func (c *Client) Dialer() ClientDialer {
 	return c.opts.dialer
-}
-
-// 返回客戶端如何分配內存
-func (c *Client) Allocator() Allocator {
-	return c.opts.allocator.Allocator
 }

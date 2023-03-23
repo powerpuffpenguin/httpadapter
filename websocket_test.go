@@ -18,7 +18,6 @@ import (
 
 func TestClientWebsocket(t *testing.T) {
 	testClientWebsocket(t)
-	testClientWebsocket(t, httpadapter.WithAllocator(clientAllocator))
 }
 func testClientWebsocket(t *testing.T, opts ...httpadapter.ClientOption) {
 	var upgrader = websocket.Upgrader{}

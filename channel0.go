@@ -8,15 +8,13 @@ import (
 	"time"
 
 	"github.com/powerpuffpenguin/httpadapter/core"
-	"github.com/powerpuffpenguin/httpadapter/internal/memory"
 	"github.com/powerpuffpenguin/httpadapter/pipe"
 )
 
 type ioTransport interface {
 	delete(c *ioChannel)
 	Done() <-chan struct{}
-	getWriter() chan<- memory.Buffer
-	getAllocator() memory.BufferAllocator
+	getWriter() chan<- []byte
 }
 type ioChannel struct {
 	// channel id
@@ -33,7 +31,7 @@ type ioChannel struct {
 	cancel context.CancelFunc
 
 	// 數據寫入通道
-	write chan memory.Buffer
+	write chan []byte
 
 	// 讀寫管道
 	pipe *pipe.PipeReader
@@ -64,7 +62,7 @@ func newIOChannel(transport ioTransport,
 		remoteAddr:   remoteAddr,
 		ctx:          ctx,
 		cancel:       cancel,
-		write:        make(chan memory.Buffer),
+		write:        make(chan []byte),
 		pipe:         pipe.NewPipeReader(window),
 		remoteWindow: uint64(remoteWindow),
 		confirm:      make(chan uint64, 1),
@@ -131,7 +129,7 @@ func (c *ioChannel) Serve() {
 	go c.serveConfirm()
 
 	var (
-		b         memory.Buffer
+		b         []byte
 		exit      bool
 		confirm   uint64 // 對方確認收到的數據
 		writed    uint64 // 已經寫入的數據
@@ -140,8 +138,7 @@ func (c *ioChannel) Serve() {
 		done0     = c.transport.Done()
 		done1     = c.ctx.Done()
 		ch        = c.transport.getWriter()
-		allocator = c.transport.getAllocator()
-		data      memory.Buffer
+		data      []byte
 	)
 IOS:
 	for {
@@ -156,7 +153,7 @@ IOS:
 				writed -= confirm
 			}
 		}
-		size = uint64(len(b.Data))
+		size = uint64(len(b))
 		for size != 0 {
 			available = c.remoteWindow - writed
 			if available == 0 {
@@ -165,33 +162,31 @@ IOS:
 			if size > available {
 				size = available
 			}
-			data = allocator.Get(int(11 + size))
-			data.Data[0] = 5
-			core.ByteOrder.PutUint64(data.Data[1:], c.id)
-			core.ByteOrder.PutUint16(data.Data[9:], uint16(size))
-			copy(data.Data[11:], b.Data[:size])
+			if size > math.MaxUint16 {
+				size = math.MaxUint16
+			}
+			data = make([]byte, 11+size)
+			data[0] = 5
+			core.ByteOrder.PutUint64(data[1:], c.id)
+			core.ByteOrder.PutUint16(data[9:], uint16(size))
+			copy(data[11:], b[:size])
 			select {
 			case <-done0:
-				allocator.Put(data)
 				break IOS
 			case <-done1:
-				allocator.Put(data)
 				break IOS
 			case ch <- data:
 				writed += size
-				b.Data = b.Data[size:]
-				size = uint64(len(b.Data))
+				b = b[size:]
+				size = uint64(len(b))
 			}
-		}
-		if b.Buffer != nil && len(b.Data) == 0 {
-			allocator.Put(b)
 		}
 	}
 }
 
-func (c *ioChannel) choose(b memory.Buffer, writed uint64) (data memory.Buffer, confirm uint64, exit bool) {
+func (c *ioChannel) choose(b []byte, writed uint64) (data []byte, confirm uint64, exit bool) {
 	done := c.transport.Done()
-	if len(b.Data) == 0 {
+	if len(b) == 0 {
 		select {
 		case <-done:
 			exit = true
@@ -248,8 +243,8 @@ func (c *ioChannel) Write(b []byte) (n int, e error) {
 		}
 	}
 	size := len(b)
-	buffer := c.transport.getAllocator().Get(size)
-	copy(buffer.Data, b)
+	buffer := make([]byte, size)
+	copy(buffer, b)
 	if timer == nil {
 		select {
 		case <-c.transport.Done():
@@ -316,13 +311,11 @@ func (c *ioChannel) serveConfirm() {
 	var (
 		confirmed, ok uint64
 		val           int
-		window        = c.remoteWindow / 10
+		window        = c.remoteWindow / 3
 		done0         = c.transport.Done()
 		done1         = c.ctx.Done()
 		ch            = c.transport.getWriter()
 		data          []byte
-		buffer, send  memory.Buffer
-		allocator     = c.transport.getAllocator()
 	)
 	for {
 		select {
@@ -350,8 +343,7 @@ func (c *ioChannel) serveConfirm() {
 
 		for confirmed != 0 {
 			if len(data) < 11 {
-				buffer = allocator.Get(1024 * 32)
-				data = buffer.Data
+				data = make([]byte, 1024*32)
 			}
 			ok = confirmed
 			if ok > math.MaxUint16 {
@@ -362,13 +354,6 @@ func (c *ioChannel) serveConfirm() {
 			data[0] = 6
 			core.ByteOrder.PutUint64(data[1:], c.id)
 			core.ByteOrder.PutUint16(data[1+8:], uint16(ok))
-			send = memory.Buffer{
-				Data: data[:11],
-			}
-			data = data[11:]
-			if len(data) < 11 {
-				send.Buffer = buffer.Buffer
-			}
 			select {
 			case <-c.ctx.Done():
 				return
@@ -376,7 +361,8 @@ func (c *ioChannel) serveConfirm() {
 				return
 			case <-done1:
 				return
-			case ch <- send:
+			case ch <- data[:11]:
+				data = data[11:]
 				confirmed -= ok
 			}
 		}

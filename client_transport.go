@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/powerpuffpenguin/httpadapter/core"
-	"github.com/powerpuffpenguin/httpadapter/internal/memory"
 )
 
 type keyClientChannel struct {
@@ -74,17 +73,16 @@ func newClientTransport(c net.Conn, buf []byte, opts *clientOptions) (t *clientT
 		opts: opts,
 		keys: make(map[uint64]*keyClientChannel),
 		baseTransport: baseTransport{
-			allocator: opts.allocator,
-			done:      make(chan struct{}),
-			window:    resp.Window,
-			c:         c,
-			ch:        make(chan memory.Buffer, 50),
+			done:   make(chan struct{}),
+			window: resp.Window,
+			c:      c,
+			ch:     make(chan []byte, 50),
 		},
 	}
 	return
 }
 
-func (t *clientTransport) Serve(buffer memory.Buffer) {
+func (t *clientTransport) Serve(b []byte) {
 	defer t.Close()
 	var (
 		r          io.Reader = t.c
@@ -105,7 +103,6 @@ func (t *clientTransport) Serve(buffer memory.Buffer) {
 	// 寫入 tcp-chain
 	go t.serveWrite(active, t.opts.writeBuffer)
 
-	b := buffer.Data
 	// 讀取 tcp-chain
 CS:
 	for {
@@ -195,19 +192,17 @@ CS:
 			}
 			id := core.ByteOrder.Uint64(b)
 			size := int(core.ByteOrder.Uint16(b[8:]))
-			var buffer memory.Buffer
+			var buffer []byte
 			if size < cap(b) {
-				buffer = memory.Buffer{
-					Data: b[:size],
-				}
+				buffer = b[:size]
 			} else if size > 32*1024 { // 避免申請 32k 以上的大內存
-				buffer = t.allocator.Get(32 * 1024)
+				buffer = make([]byte, 32*1024)
 			} else {
-				buffer = t.allocator.Get(size)
+				buffer = make([]byte, size)
 			}
 			var (
 				n       int
-				max     = len(buffer.Data)
+				max     = len(buffer)
 				healthy bool
 			)
 			for size != 0 {
@@ -216,9 +211,8 @@ CS:
 				} else {
 					n = size
 				}
-				_, e = io.ReadFull(r, buffer.Data[:n])
+				_, e = io.ReadFull(r, buffer[:n])
 				if e != nil {
-					t.allocator.Put(buffer)
 					break CS
 				}
 				size -= n
@@ -233,7 +227,7 @@ CS:
 							Logger.Printf(core.CommandConfirm.String()+": channel(%v) not ready\n", id)
 						}
 					} else {
-						val.channel.Pipe(buffer.Data[:n])
+						val.channel.Pipe(buffer[:n])
 					}
 				} else {
 					if healthy {
@@ -243,7 +237,6 @@ CS:
 					}
 				}
 			}
-			t.allocator.Put(buffer)
 		case core.CommandConfirm: // 確認 channel 數據
 			_, e = io.ReadFull(r, b[:8+2])
 			if e != nil {
@@ -333,8 +326,7 @@ func (t *clientTransport) createResult(rw *keyClientChannelRW, code byte, val *i
 }
 func (t *clientTransport) Create(ctx context.Context) (c net.Conn, e error) {
 	id := atomic.AddUint64(&t.id, 1)
-	buffer := t.allocator.Get(9)
-	data := buffer.Data
+	data := make([]byte, 1+8)
 	data[0] = byte(core.CommandCreate)
 	core.ByteOrder.PutUint64(data[1:], id)
 
@@ -344,7 +336,6 @@ func (t *clientTransport) Create(ctx context.Context) (c net.Conn, e error) {
 	e = ctx.Err()
 	if e != nil {
 		t.Unlock()
-		t.allocator.Put(buffer)
 		return
 	}
 	t.keys[id] = &keyClientChannel{
@@ -360,13 +351,11 @@ func (t *clientTransport) Create(ctx context.Context) (c net.Conn, e error) {
 	select {
 	case <-ctx.Done():
 		e = ctx.Err()
-		t.allocator.Put(buffer)
 		return
 	case <-t.done:
 		e = ErrClientClosed
-		t.allocator.Put(buffer)
 		return
-	case t.ch <- buffer:
+	case t.ch <- data:
 	}
 	// 等待響應
 	select {

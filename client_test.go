@@ -40,7 +40,6 @@ func ServerEcho(duration time.Duration) httpadapter.ServerOption {
 
 func TestClient(t *testing.T) {
 	testClient(t)
-	testClient(t, httpadapter.WithAllocator(clientAllocator))
 }
 func testClient(t *testing.T, opts ...httpadapter.ClientOption) {
 	s := newServer(t,
@@ -78,7 +77,6 @@ func testClient(t *testing.T, opts ...httpadapter.ClientOption) {
 }
 func TestClientSleep(t *testing.T) {
 	testClientSleep(t)
-	testClientSleep(t, httpadapter.WithAllocator(clientAllocator))
 }
 func testClientSleep(t *testing.T, opts ...httpadapter.ClientOption) {
 	s := newServer(t,
@@ -117,7 +115,6 @@ func testClientSleep(t *testing.T, opts ...httpadapter.ClientOption) {
 }
 func TestClientHttp(t *testing.T) {
 	testClientHttp(t)
-	testClientHttp(t, httpadapter.WithAllocator(clientAllocator))
 }
 func testClientHttp(t *testing.T, opts ...httpadapter.ClientOption) {
 	mux := http.NewServeMux()
@@ -249,7 +246,6 @@ func checkClientHttpBody(t *testing.T, resp *httpadapter.MessageResponse, e erro
 }
 func TestClientHttpBody(t *testing.T) {
 	testClientHttpBody(t)
-	testClientHttpBody(t, httpadapter.WithAllocator(clientAllocator))
 }
 func testClientHttpBody(t *testing.T, opts ...httpadapter.ClientOption) {
 	mux := http.NewServeMux()

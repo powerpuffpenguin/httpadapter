@@ -8,13 +8,10 @@ import (
 	"time"
 
 	"github.com/powerpuffpenguin/httpadapter/core"
-	"github.com/powerpuffpenguin/httpadapter/internal/memory"
 )
 
 // 爲 客戶端/服務器 傳輸層提供一些通用功能
 type baseTransport struct {
-	// 內存分配器
-	allocator memory.BufferAllocator
 	// 結束信號
 	done chan struct{}
 	// 關閉標記
@@ -25,7 +22,7 @@ type baseTransport struct {
 	window uint32
 
 	// 數據寫入通道
-	ch chan memory.Buffer
+	ch chan []byte
 }
 
 // 關閉傳輸層 此後所有關聯的資源都應該關閉和釋放
@@ -36,9 +33,7 @@ func (t *baseTransport) Close() {
 	}
 }
 
-var pingBuffer = memory.Buffer{
-	Data: []byte{byte(core.CommandPing)},
-}
+var pingBuffer = []byte{byte(core.CommandPing)}
 
 // 定時傳送 Ping 指令
 func (t *baseTransport) servePing(active <-chan int, duration time.Duration) {
@@ -76,7 +71,7 @@ func (t *baseTransport) servePing(active <-chan int, duration time.Duration) {
 func (t *baseTransport) serveWrite(active chan<- int, size int) {
 	defer t.c.Close()
 	var (
-		b  memory.Buffer
+		b  []byte
 		w  io.Writer = t.c
 		wf *bufio.Writer
 		e  error
@@ -96,8 +91,7 @@ func (t *baseTransport) serveWrite(active chan<- int, size int) {
 		// 讀取待寫入數據
 		select {
 		case b = <-t.ch:
-			_, e = w.Write(b.Data)
-			t.allocator.Put(b)
+			_, e = w.Write(b)
 			if e != nil {
 				return
 			}
@@ -110,8 +104,7 @@ func (t *baseTransport) serveWrite(active chan<- int, size int) {
 		for {
 			select {
 			case b = <-t.ch:
-				_, e = w.Write(b.Data)
-				t.allocator.Put(b)
+				_, e = w.Write(b)
 				if e != nil {
 					return
 				}
@@ -138,22 +131,20 @@ func (t *baseTransport) onPong(r io.Reader, buf []byte) (exit bool) {
 		exit = true
 		return
 	}
-	buffer := t.allocator.Get(5)
-	copy(buffer.Data, buf[:5])
+	b := make([]byte, 5)
+	copy(b, buf[:5])
 	select {
 	case <-t.done:
-		t.allocator.Put(buffer)
 		exit = true
 		return
-	case t.ch <- buffer:
+	case t.ch <- b:
 		return
 	default:
 	}
 	go func() {
 		select {
 		case <-t.done:
-			t.allocator.Put(buffer)
-		case t.ch <- buffer:
+		case t.ch <- b:
 		}
 	}()
 	return
@@ -161,23 +152,17 @@ func (t *baseTransport) onPong(r io.Reader, buf []byte) (exit bool) {
 
 // 發送一個 channel 關閉指令
 func (t *baseTransport) sendClose(id uint64) {
-	buffer := t.allocator.Get(1 + 8)
-	buffer.Data[0] = byte(core.CommandClose)
-	core.ByteOrder.PutUint64(buffer.Data[1:], id)
+	b := make([]byte, 1+8)
+	b[0] = byte(core.CommandClose)
+	core.ByteOrder.PutUint64(b[1:], id)
 	select {
 	case <-t.done:
-		t.allocator.Put(buffer)
-	case t.ch <- buffer:
+	case t.ch <- b:
 	}
 }
 
-// 返回內存分配器
-func (t *clientTransport) getAllocator() memory.BufferAllocator {
-	return t.allocator
-}
-
 // 返回數據寫入通達
-func (t *clientTransport) getWriter() chan<- memory.Buffer {
+func (t *clientTransport) getWriter() chan<- []byte {
 	return t.ch
 }
 

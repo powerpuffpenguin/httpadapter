@@ -28,17 +28,16 @@ func (c *Client) Websocket(ctx context.Context, u string, header http.Header) (w
 		return
 	} else if resp.Status != http.StatusSwitchingProtocols {
 		defer cc.Close()
-		buffer := c.opts.allocator.Get(256)
+		buffer := make([]byte, 256)
 		var n int
-		n, e = pipe.ReadAll(resp.Body, buffer.Data)
+		n, e = pipe.ReadAll(resp.Body, buffer)
 		if e == nil {
 			if n == 0 {
 				e = errors.New(`switching protocols error`)
 			} else {
-				e = errors.New(string(buffer.Data[:n]))
+				e = errors.New(string(buffer[:n]))
 			}
 		}
-		c.opts.allocator.Put(buffer)
 		return
 	}
 	ws = &Websocket{c: cc}

@@ -21,7 +21,6 @@ import (
 
 func TestClientTCP(t *testing.T) {
 	testClientTCP(t)
-	testClientTCP(t, httpadapter.WithAllocator(clientAllocator))
 }
 func testClientTCP(t *testing.T, opts ...httpadapter.ClientOption) {
 	var upgrader = websocket.Upgrader{}

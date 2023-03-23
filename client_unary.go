@@ -1,6 +1,7 @@
 package httpadapter
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,16 +14,10 @@ import (
 
 	"github.com/powerpuffpenguin/easygo"
 	"github.com/powerpuffpenguin/httpadapter/core"
-	"github.com/powerpuffpenguin/httpadapter/internal/pipe"
 )
 
 func (c *Client) unary(ctx context.Context, body io.Reader, bodylen uint64, md *core.ClientMetadata) (cc net.Conn, resp *MessageResponse, e error) {
-	buffer := c.opts.allocator.Get(256)
-	w := pipe.NewBuffer(buffer.Data[:10])
-	w.Allocator = c.opts.allocator
-	if buffer.Buffer != nil {
-		defer c.opts.allocator.Put(buffer)
-	}
+	w := bytes.NewBuffer(make([]byte, 10, 256))
 	e = json.NewEncoder(w).Encode(md)
 	if e != nil {
 		return
@@ -83,11 +78,7 @@ func (c *Client) unary(ctx context.Context, body io.Reader, bodylen uint64, md *
 
 		// read md
 		if cap(b) < metalen {
-			buffer := c.opts.allocator.Get(metalen)
-			if buffer.Buffer != nil {
-				defer c.opts.allocator.Put(buffer)
-			}
-			data = buffer.Data
+			data = make([]byte, metalen)
 		} else {
 			data = b[:metalen]
 		}
