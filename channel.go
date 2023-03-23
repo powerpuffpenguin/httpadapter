@@ -11,91 +11,88 @@ import (
 	"github.com/powerpuffpenguin/httpadapter/pipe"
 )
 
-type Conn interface {
-	net.Conn
-	Context() context.Context
-}
-type dataTransport interface {
-	delete(c *dataChannel)
+type ioTransport interface {
+	delete(c *ioChannel)
 	Done() <-chan struct{}
 	getWriter() chan<- []byte
 }
-type dataChannel struct {
-	id            uint64
-	t             dataTransport
-	localAddr     net.Addr
-	remoteAddr    net.Addr
-	closed        int32
-	ctx           *channelContext
-	write         chan []byte
-	pipe          *pipe.PipeReader
-	remoteWindow  int
-	confirm       chan int
-	sendConfirm   chan int
-	deadline      atomic.Value
-	readDeadline  atomic.Value
+type ioChannel struct {
+	// channel id
+	id uint64
+	// 傳輸層
+	transport ioTransport
+	// 網路地址
+	localAddr  net.Addr
+	remoteAddr net.Addr
+
+	// 關閉標籤
+	closed int32
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	// 數據寫入通道
+	write chan []byte
+
+	// 讀寫管道
+	pipe *pipe.PipeReader
+	// 對面窗口
+	remoteWindow uint64
+	// 收到確認包
+	confirm chan uint64
+	// 發送確認包
+	sendConfirm chan int
+	// 讀寫截止時間
+	deadline atomic.Value
+	// 讀取截止時間
+	readDeadline atomic.Value
+	// 寫入截止時間
 	writeDeadline atomic.Value
 }
 
-func newChannel(t dataTransport,
+func newIOChannel(transport ioTransport,
 	id uint64,
 	localAddr, remoteAddr net.Addr,
 	window, remoteWindow int,
-) *dataChannel {
-	return &dataChannel{
+) *ioChannel {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &ioChannel{
+		transport:    transport,
 		id:           id,
-		t:            t,
 		localAddr:    localAddr,
 		remoteAddr:   remoteAddr,
-		ctx:          newChannelContext(),
+		ctx:          ctx,
+		cancel:       cancel,
 		write:        make(chan []byte),
 		pipe:         pipe.NewPipeReader(window),
-		remoteWindow: remoteWindow,
-		confirm:      make(chan int, 1),
+		remoteWindow: uint64(remoteWindow),
+		confirm:      make(chan uint64, 1),
 		sendConfirm:  make(chan int, 10),
 	}
 }
 
-type channelContext struct {
-	context.Context
-	cancel context.CancelFunc
-}
-
-func newChannelContext() *channelContext {
-	ctx, cancel := context.WithCancel(context.Background())
-	return &channelContext{
-		Context: ctx,
-		cancel:  cancel,
-	}
-}
-func (c *channelContext) Err() (e error) {
-	e = c.Context.Err()
-	if e != nil {
-		e = ErrChannelClosed
-	}
-	return
-}
-
-func (c *dataChannel) Context() context.Context {
+func (c *ioChannel) Context() context.Context {
 	return c.ctx
 }
-func (c *dataChannel) Close() (e error) {
+
+func (c *ioChannel) Close() (e error) {
 	if c.closed == 0 && atomic.SwapInt32(&c.closed, 1) == 0 {
-		c.ctx.cancel()
+		c.cancel()
 		c.pipe.Close()
 	} else {
 		e = ErrChannelClosed
 	}
 	return
 }
-func (c *dataChannel) LocalAddr() net.Addr {
+
+func (c *ioChannel) LocalAddr() net.Addr {
 	return c.localAddr
 }
 
-func (c *dataChannel) RemoteAddr() net.Addr {
+func (c *ioChannel) RemoteAddr() net.Addr {
 	return c.remoteAddr
 }
-func (c *dataChannel) SetDeadline(t time.Time) (e error) {
+
+func (c *ioChannel) SetDeadline(t time.Time) (e error) {
 	if c.closed == 0 && atomic.LoadInt32(&c.closed) == 0 {
 		c.deadline.Store(t)
 	} else {
@@ -104,7 +101,7 @@ func (c *dataChannel) SetDeadline(t time.Time) (e error) {
 	return
 }
 
-func (c *dataChannel) SetReadDeadline(t time.Time) (e error) {
+func (c *ioChannel) SetReadDeadline(t time.Time) (e error) {
 	if c.closed == 0 && atomic.LoadInt32(&c.closed) == 0 {
 		c.readDeadline.Store(t)
 	} else {
@@ -113,7 +110,7 @@ func (c *dataChannel) SetReadDeadline(t time.Time) (e error) {
 	return
 }
 
-func (c *dataChannel) SetWriteDeadline(t time.Time) (e error) {
+func (c *ioChannel) SetWriteDeadline(t time.Time) (e error) {
 	if c.closed == 0 && atomic.LoadInt32(&c.closed) == 0 {
 		c.writeDeadline.Store(t)
 	} else {
@@ -121,26 +118,29 @@ func (c *dataChannel) SetWriteDeadline(t time.Time) (e error) {
 	}
 	return
 }
-func (c *dataChannel) Serve() {
+
+func (c *ioChannel) Serve() {
 	defer func() {
 		// 關閉 channel
 		c.Close()
 		// 通知 tcp-chain 關閉
-		c.t.delete(c)
+		c.transport.delete(c)
 	}()
 	go c.serveConfirm()
 
 	var (
 		b         []byte
 		exit      bool
-		confirm   int // 對方確認收到的數據
-		writed    = 0 // 已經寫入的數據
-		available int // 可寫數據
-		size      int
-		done      = c.t.Done()
-		ch        = c.t.getWriter()
+		confirm   uint64 // 對方確認收到的數據
+		writed    uint64 // 已經寫入的數據
+		available uint64 // 可寫數據
+		size      uint64
+		done0     = c.transport.Done()
+		done1     = c.ctx.Done()
+		ch        = c.transport.getWriter()
 		data      []byte
 	)
+IOS:
 	for {
 		b, confirm, exit = c.choose(b, writed)
 		if exit {
@@ -153,7 +153,7 @@ func (c *dataChannel) Serve() {
 				writed -= confirm
 			}
 		}
-		size = len(b)
+		size = uint64(len(b))
 		for size != 0 {
 			available = c.remoteWindow - writed
 			if available == 0 {
@@ -162,26 +162,30 @@ func (c *dataChannel) Serve() {
 			if size > available {
 				size = available
 			}
+			if size > math.MaxUint16 {
+				size = math.MaxUint16
+			}
 			data = make([]byte, 11+size)
 			data[0] = 5
 			core.ByteOrder.PutUint64(data[1:], c.id)
 			core.ByteOrder.PutUint16(data[9:], uint16(size))
 			copy(data[11:], b[:size])
 			select {
-			case <-done:
-				return
-			case <-c.ctx.Done():
-				return
+			case <-done0:
+				break IOS
+			case <-done1:
+				break IOS
 			case ch <- data:
 				writed += size
 				b = b[size:]
-				size = len(b)
+				size = uint64(len(b))
 			}
 		}
 	}
 }
-func (c *dataChannel) choose(b []byte, writed int) (data []byte, confirm int, exit bool) {
-	done := c.t.Done()
+
+func (c *ioChannel) choose(b []byte, writed uint64) (data []byte, confirm uint64, exit bool) {
+	done := c.transport.Done()
 	if len(b) == 0 {
 		select {
 		case <-done:
@@ -215,7 +219,7 @@ func (c *dataChannel) choose(b []byte, writed int) (data []byte, confirm int, ex
 	}
 	return
 }
-func (c *dataChannel) Write(b []byte) (n int, e error) {
+func (c *ioChannel) Write(b []byte) (n int, e error) {
 	var deadline time.Time
 	v := c.deadline.Load()
 	if v != nil {
@@ -238,21 +242,21 @@ func (c *dataChannel) Write(b []byte) (n int, e error) {
 			return
 		}
 	}
-
-	data := make([]byte, len(b))
-	copy(data, b)
+	size := len(b)
+	buffer := make([]byte, size)
+	copy(buffer, b)
 	if timer == nil {
 		select {
-		case <-c.t.Done():
+		case <-c.transport.Done():
 			e = ErrTCPClosed
 		case <-c.ctx.Done():
 			e = ErrChannelClosed
-		case c.write <- data:
-			n = len(b)
+		case c.write <- buffer:
+			n = size
 		}
 	} else {
 		select {
-		case <-c.t.Done():
+		case <-c.transport.Done():
 			if !timer.Stop() {
 				<-timer.C
 			}
@@ -262,19 +266,22 @@ func (c *dataChannel) Write(b []byte) (n int, e error) {
 				<-timer.C
 			}
 			e = ErrChannelClosed
-		case c.write <- data:
+		case c.write <- buffer:
 			if !timer.Stop() {
 				<-timer.C
 			}
-			n = len(b)
+			n = size
 		case <-timer.C:
 			e = context.DeadlineExceeded
 		}
 	}
 	return
 }
-func (c *dataChannel) Confirm(val int) (overflow bool) {
+
+func (c *ioChannel) Confirm(val uint64) (overflow bool) {
 	select {
+	case <-c.transport.Done():
+		return
 	case <-c.ctx.Done():
 		return
 	case c.confirm <- val:
@@ -284,6 +291,8 @@ func (c *dataChannel) Confirm(val int) (overflow bool) {
 
 	for {
 		select {
+		case <-c.transport.Done():
+			return
 		case <-c.ctx.Done():
 			return
 		case c.confirm <- val:
@@ -297,20 +306,22 @@ func (c *dataChannel) Confirm(val int) (overflow bool) {
 		}
 	}
 }
-func (c *dataChannel) serveConfirm() {
+
+func (c *ioChannel) serveConfirm() {
 	var (
 		confirmed, ok uint64
 		val           int
-		window        = uint64(c.remoteWindow / 10)
-		done          = c.t.Done()
-		ch            = c.t.getWriter()
+		window        = c.remoteWindow / 3
+		done0         = c.transport.Done()
+		done1         = c.ctx.Done()
+		ch            = c.transport.getWriter()
 		data          []byte
 	)
 	for {
 		select {
-		case <-c.ctx.Done():
+		case <-done0:
 			return
-		case <-done:
+		case <-done1:
 			return
 		case val = <-c.sendConfirm:
 			confirmed = uint64(val)
@@ -319,9 +330,9 @@ func (c *dataChannel) serveConfirm() {
 	CSF:
 		for confirmed < window {
 			select {
-			case <-c.ctx.Done():
+			case <-done0:
 				return
-			case <-done:
+			case <-done1:
 				return
 			case val = <-c.sendConfirm:
 				confirmed += uint64(val)
@@ -331,8 +342,8 @@ func (c *dataChannel) serveConfirm() {
 		}
 
 		for confirmed != 0 {
-			if len(data) == 0 {
-				data = make([]byte, 11*2900)
+			if len(data) < 11 {
+				data = make([]byte, 1024*32)
 			}
 			ok = confirmed
 			if ok > math.MaxUint16 {
@@ -346,7 +357,9 @@ func (c *dataChannel) serveConfirm() {
 			select {
 			case <-c.ctx.Done():
 				return
-			case <-done:
+			case <-done0:
+				return
+			case <-done1:
 				return
 			case ch <- data[:11]:
 				data = data[11:]
@@ -355,18 +368,20 @@ func (c *dataChannel) serveConfirm() {
 		}
 	}
 }
-func (c *dataChannel) Read(b []byte) (n int, e error) {
+
+func (c *ioChannel) Read(b []byte) (n int, e error) {
 	n, e = c.pipe.Read(b)
 	if n != 0 {
 		select {
 		case c.sendConfirm <- n:
 		case <-c.ctx.Done():
-		case <-c.t.Done():
+		case <-c.transport.Done():
 		}
 	}
 	return
 }
-func (c *dataChannel) Pipe(b []byte) {
+
+func (c *ioChannel) Pipe(b []byte) {
 	_, e := c.pipe.Write(b)
 	if e != nil { // pipe 錯誤關閉 channel
 		c.Close()

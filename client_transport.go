@@ -35,8 +35,8 @@ type clientTransport struct {
 	id   uint64
 	opts *clientOptions
 	keys map[uint64]*keyClientChannel
-	sync.Mutex
 
+	sync.Mutex
 	baseTransport
 }
 

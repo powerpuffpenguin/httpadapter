@@ -27,18 +27,18 @@ local Options = {
         // 監聽端口
         Listen: ":8964",
         // 隧道連接地址
-        Backend: "tcp://ssh.king011.com:10000",
+        Backend: "tcp://127.0.0.1:10000",
     },
     Options{
         // 監聽端口
         Listen: ":6489",
         // 隧道連接地址
-        Backend: "tcp://ssh.king011.com:10002",
+        Backend: "tcp://127.0.0.1:10002",
     },
     Options{
         // 監聽端口
         Listen: ":9444",
         // 隧道連接地址
-        Backend: "tcp://ssh.king011.com:9444",
+        Backend: "tcp://127.0.0.1:9444",
     },
 ]

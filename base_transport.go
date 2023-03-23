@@ -133,6 +133,10 @@ func (t *baseTransport) onPong(r io.Reader, buf []byte) (exit bool) {
 	}
 	b := make([]byte, 5)
 	copy(b, buf[:5])
+	t.postWrite(b)
+	return
+}
+func (t *baseTransport) postWrite(b []byte) (exit bool) {
 	select {
 	case <-t.done:
 		exit = true

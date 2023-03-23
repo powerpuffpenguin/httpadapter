@@ -5,81 +5,59 @@ import (
 	"io"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/powerpuffpenguin/httpadapter/core"
 )
 
 type serverTransport struct {
-	server               *Server
-	c                    net.Conn
-	window, remoteWindow int
-	handler              Handler
-	done                 chan struct{}
-	closed               int32
+	server *Server
+
+	keys map[uint64]*ioChannel
 	sync.Mutex
-	keys map[uint64]*dataChannel
-	ch   chan []byte
+	baseTransport
 }
 
 func newServerTransport(server *Server,
 	c net.Conn,
-	window, remoteWindow int,
-	handler Handler,
+	remoteWindow uint32,
 ) *serverTransport {
 	return &serverTransport{
-		server:       server,
-		c:            c,
-		window:       window,
-		remoteWindow: remoteWindow,
-		handler:      handler,
-		done:         make(chan struct{}),
-		keys:         make(map[uint64]*dataChannel),
-		ch:           make(chan []byte, 100),
+		server: server,
+		keys:   make(map[uint64]*ioChannel),
+		baseTransport: baseTransport{
+			done:   make(chan struct{}),
+			window: remoteWindow,
+			c:      c,
+			ch:     make(chan []byte, 50),
+		},
 	}
 }
-func (t *serverTransport) Close() {
-	if t.closed == 0 && atomic.SwapInt32(&t.closed, 1) == 0 {
-		close(t.done)
-		t.c.Close()
-	}
-}
-func (t *serverTransport) Serve(b []byte,
-	readBuffer, writeBuffer,
-	channels int,
-	ping time.Duration,
-) {
+
+func (t *serverTransport) Serve(b []byte) {
 	defer t.Close()
 
 	var (
+		opts                 = &t.server.opts
 		r          io.Reader = t.c
 		e          error
-		ch         = t.ch
 		localAddr  = t.c.LocalAddr()
 		remoteAddr = t.c.RemoteAddr()
 		active     chan int
 	)
-	if readBuffer > 0 {
-		r = bufio.NewReaderSize(r, readBuffer)
+	// 建立讀取緩存
+	if opts.readBuffer > 0 {
+		r = bufio.NewReaderSize(r, opts.readBuffer)
 	}
 
 	// ping
-	if ping > time.Second {
+	if opts.ping > time.Second {
 		active = make(chan int, 1)
-		go core.Ping(
-			ping,
-			t.done, active,
-			ch,
-			[]byte{byte(core.CommandPing)},
-		)
+		go t.servePing(active, opts.ping)
 	}
 
 	// 寫入 tcp-chain
-	go core.Write(t.c, writeBuffer,
-		t.done, active,
-		ch,
-	)
+	go t.serveWrite(active, opts.writeBuffer)
 
 	// 讀取 tcp-chain
 TS:
@@ -100,7 +78,7 @@ TS:
 		switch cmd {
 		case core.CommandPing:
 		case core.CommandPong: // 響應 pong
-			if onPong(r, b, t.done, ch) {
+			if t.onPong(r, b) {
 				break TS
 			}
 		case core.CommandCreate: // 創建 channel
@@ -118,20 +96,20 @@ TS:
 			_, exists := t.keys[id]
 			if exists {
 				data[1+8] = 1
-			} else if channels > 0 && len(t.keys) >= channels {
+			} else if opts.channels > 0 && len(t.keys) >= opts.channels {
 				data[1+8] = 2
 			} else {
-				val := newChannel(t, id,
+				val := newIOChannel(t, id,
 					localAddr, remoteAddr,
-					t.window, t.remoteWindow,
+					int(opts.window), int(t.window),
 				)
 				go val.Serve()
-				go t.handler.ServeChannel(t.server, val)
+				go opts.channelHandler.ServeChannel(t.server, val)
 				t.keys[id] = val
 				data[1+8] = 0
 			}
 			t.Unlock()
-			if core.PostWrite(t.done, t.ch, data) {
+			if t.postWrite(data) {
 				break TS
 			}
 		case core.CommandClose: // 客戶端要求關閉 channel
@@ -153,24 +131,42 @@ TS:
 			}
 			id := core.ByteOrder.Uint64(b)
 			size := int(core.ByteOrder.Uint16(b[8:]))
-			var data []byte
-			if len(b) < size {
-				data = make([]byte, size)
+			var buffer []byte
+			if size < cap(b) {
+				buffer = b[:size]
+			} else if size > 32*1024 { // 避免申請 32k 以上的大內存
+				buffer = make([]byte, 32*1024)
 			} else {
-				data = b[:size]
+				buffer = make([]byte, size)
 			}
-			_, e = io.ReadFull(r, data)
-			if e != nil {
-				break TS
-			}
-			t.Lock()
-			sc, exists := t.keys[id]
-			t.Unlock()
-			if exists {
-				sc.Pipe(data)
-			} else {
-				t.sendClose(id)
-				Logger.Printf(core.CommandWrite.String()+": channel(%v) not found\n", id)
+			var (
+				n       int
+				max     = len(buffer)
+				healthy bool
+			)
+			for size != 0 {
+				if size > max {
+					n = max
+				} else {
+					n = size
+				}
+				_, e = io.ReadFull(r, buffer[:n])
+				if e != nil {
+					break TS
+				}
+				size -= n
+				t.Lock()
+				val, exists := t.keys[id]
+				t.Unlock()
+				if exists {
+					val.Pipe(buffer[:n])
+				} else {
+					if healthy {
+						healthy = false
+						t.sendClose(id)
+						Logger.Printf(core.CommandWrite.String()+": channel(%v) not found\n", id)
+					}
+				}
 			}
 		case core.CommandConfirm: // 確認 channel 數據
 			_, e = io.ReadFull(r, b[:8+2])
@@ -182,7 +178,7 @@ TS:
 			sc, exists := t.keys[id]
 			t.Unlock()
 			if exists {
-				if sc.Confirm(int(core.ByteOrder.Uint16(b[8:]))) {
+				if sc.Confirm(uint64(core.ByteOrder.Uint16(b[8:]))) {
 					t.sendClose(id)
 					Logger.Printf(core.CommandConfirm.String()+": channel(%v) overflow\n", id)
 				}
@@ -208,7 +204,7 @@ func (t *serverTransport) getWriter() chan<- []byte {
 func (t *serverTransport) Done() <-chan struct{} {
 	return t.done
 }
-func (t *serverTransport) delete(c *dataChannel) {
+func (t *serverTransport) delete(c *ioChannel) {
 	deleted := false
 	t.Lock()
 	if t.keys[c.id] == c {

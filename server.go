@@ -223,14 +223,8 @@ func (s *Server) serve(l *httpListner, rw net.Conn) {
 	// 執行轉發
 	newServerTransport(s,
 		rw,
-		int(s.opts.window), int(window),
-		s.opts.channelHandler,
-	).Serve(
-		b,
-		s.opts.readBuffer, s.opts.writeBuffer,
-		s.opts.channels,
-		s.opts.ping,
-	)
+		window,
+	).Serve(b)
 }
 func (s *Server) sendHello(rw net.Conn, b []byte, hello core.Hello, version string) (e error) {
 	msg := core.ServerHello{

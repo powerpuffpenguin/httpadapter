@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/httpadapter
-ExecStart=/opt/httpadapter server
+ExecStart=/opt/httpadapter/httpadapter server
 KillMode=control-group
 Restart=on-failure
 LimitNOFILE=100000
