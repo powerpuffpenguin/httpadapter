@@ -30,6 +30,41 @@ type Server struct {
 		// 一段時間內沒有數據流動就發送 ping 驗證 tcp 連接是否還有效
 		Ping time.Duration
 	}
+	Rewriter []Rewriter
+	// 對這些 Host 值使用 h2c 連接上游服務
+	H2C H2C
+}
+type H2C struct {
+	// Host 匹配規則，不設置則不進行匹配
+	// 詳細匹配規則和Schemes相同
+	Hosts []string
+	// Hostname 匹配規則，不設置則不進行匹配
+	// 詳細匹配規則和Schemes相同
+	Hostnames []string
+}
+type Rewriter struct {
+	// Scheme 匹配規則，不設置則匹配任意 Scheme
+	// 數組中任意一個匹配則任務匹配重寫條件
+	// * 'abc.com' 字符串完全匹配
+	// * '*' * 標記匹配任意內容
+	// * '^http' ^ 標記匹配字符串前綴
+	// * 's$' $ 標記匹配字符串後綴
+	// * '@(https)|(wss)' @ 標記使用正在表達式進行匹配
+	Schemes []string
+	// Host 匹配規則，不設置則匹配任意 Host
+	// 詳細匹配規則和Schemes相同
+	Hosts []string
+	// Hostname 匹配規則，不設置則匹配任意 Hostname
+	// 詳細匹配規則和Schemes相同
+	Hostnames []string
+	// 如果爲 true 則拒絕對此地址的轉發
+	Reject bool
+
+	// 要 修改的 Scheme 如果不設置則 不改變
+	// tcp/tls/ws/wss/http/https
+	Scheme string
+	// 要 修改的 Host 如果不設置則 不改變
+	Host string
 }
 
 func loadObject(filename string, obj any) (e error) {

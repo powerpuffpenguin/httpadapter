@@ -322,3 +322,13 @@ func (s *Server) Ping() time.Duration {
 func (s *Server) TCPDialer() TCPDialer {
 	return s.opts.tcpDialer
 }
+
+// 返回 url 過濾器 hook
+func (s *Server) HookURL() HookURL {
+	return s.opts.hookURL
+}
+
+// 返回 hook 用於自定義如何發送 http 請求
+func (s *Server) HookDo() HookDo {
+	return s.opts.hookDo
+}

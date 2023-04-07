@@ -125,6 +125,14 @@ func (f *forwardConn) Serve(opts *serverOptions) {
 		f.sendText(http.StatusBadRequest, err.Error())
 		return
 	}
+	if opts.hookURL != nil {
+		uri, err = opts.hookURL.Hook(uri)
+		if err != nil {
+			f.sendText(http.StatusBadRequest, err.Error())
+			return
+		}
+		metadata.URL = uri.String()
+	}
 	switch uri.Scheme {
 	case "tcp", "tls":
 		f.tcp(opts, uri, &metadata, int64(bodylen))
@@ -138,7 +146,7 @@ func (f *forwardConn) Serve(opts *serverOptions) {
 			http.MethodPut,
 			http.MethodPatch,
 			http.MethodDelete:
-			f.unary(&metadata, int64(bodylen))
+			f.unary(opts.hookDo, &metadata, int64(bodylen))
 		default:
 			f.sendText(http.StatusBadRequest, `not support method: `+metadata.Method)
 		}
@@ -312,7 +320,8 @@ func (f *forwardConn) writeWS(ws *websocket.Conn, b []byte) (closed bool, e erro
 	e = w.Close()
 	return
 }
-func (f *forwardConn) unary(md *core.ClientMetadata, bodylen int64) {
+
+func (f *forwardConn) unary(client HookDo, md *core.ClientMetadata, bodylen int64) {
 	// 創建 request
 	ctx := f.c.Context()
 	req, e := http.NewRequestWithContext(ctx, md.Method, md.URL, io.LimitReader(f.c, bodylen))
@@ -335,17 +344,30 @@ func (f *forwardConn) unary(md *core.ClientMetadata, bodylen int64) {
 		}
 	}
 	// 發送請求
-	resp, e := http.DefaultClient.Do(req)
+	var resp *http.Response
+	if client == nil {
+		resp, e = http.DefaultClient.Do(req)
+	} else {
+		resp, e = client.Do(req)
+	}
 	if e != nil {
 		f.sendText(http.StatusBadGateway, e.Error())
 		return
 	}
 	defer resp.Body.Close()
-
 	// 解析數據
 	s := resp.Header.Get(`content-length`)
 	if s == `` {
-		f.sendText(http.StatusBadGateway, `http response(`+strconv.Itoa(resp.StatusCode)+`) not set header: content-length`)
+		b, e := io.ReadAll(io.LimitReader(resp.Body, 1024*32))
+		if e != nil {
+			f.sendText(http.StatusBadGateway, e.Error())
+			return
+		}
+		if len(b) == 1024*32 {
+			f.sendText(http.StatusBadGateway, `http response(`+strconv.Itoa(resp.StatusCode)+`) not set header: content-length`)
+		} else {
+			f.sendResponse(resp.StatusCode, resp.Header, bytes.NewReader(b), uint64(len(b)))
+		}
 		return
 	}
 	length, e := strconv.ParseUint(s, 10, 64)

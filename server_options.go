@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/powerpuffpenguin/easygo/option"
@@ -31,7 +32,42 @@ type serverOptions struct {
 	channelHandler Handler
 	ping           time.Duration
 	tcpDialer      TCPDialer
+	hookURL        HookURL
+	hookDo         HookDo
 }
+type HookDo interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+type hookDoFunc struct {
+	f func(req *http.Request) (*http.Response, error)
+}
+
+func HookDoFunc(f func(req *http.Request) (resp *http.Response, e error)) HookDo {
+	return hookDoFunc{
+		f: f,
+	}
+}
+func (h hookDoFunc) Do(req *http.Request) (*http.Response, error) {
+	return h.f(req)
+}
+
+type HookURL interface {
+	Hook(url *url.URL) (*url.URL, error)
+}
+
+type hookURLFunc struct {
+	f func(*url.URL) (*url.URL, error)
+}
+
+func HookURLFunc(f func(*url.URL) (*url.URL, error)) HookURL {
+	return hookURLFunc{
+		f: f,
+	}
+}
+func (h hookURLFunc) Hook(u *url.URL) (*url.URL, error) {
+	return h.f(u)
+}
+
 type tcpTCPDialerFunc struct {
 	f func(ctx context.Context, addr string, tls bool) (net.Conn, error)
 }
@@ -164,5 +200,19 @@ func ServerTCPDialer(dialer TCPDialer) ServerOption {
 		} else {
 			opts.tcpDialer = dialer
 		}
+	})
+}
+
+// 設置一個 hook 用於在轉發前對 目標 url 進行 過濾
+func ServerHookURL(h HookURL) ServerOption {
+	return option.New(func(opts *serverOptions) {
+		opts.hookURL = h
+	})
+}
+
+// 設置一個 hook 用於自定義如何發送 http 請求
+func ServerHookDo(h HookDo) ServerOption {
+	return option.New(func(opts *serverOptions) {
+		opts.hookDo = h
 	})
 }
