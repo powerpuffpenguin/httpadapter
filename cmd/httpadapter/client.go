@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -39,12 +40,21 @@ func client() *cobra.Command {
 		uri, method, server string
 		header              []string
 		body                string
+		usetls, insecure    bool
 	)
 	cmd := &cobra.Command{
 		Use:   "client",
 		Short: "httpadapter client, It can be used to send requests to the httpadapter server",
 		Run: func(cmd *cobra.Command, args []string) {
-			client := httpadapter.NewClient(server)
+			var opts []httpadapter.ClientOption
+			if usetls {
+				opts = append(opts, httpadapter.WithDialer(&tls.Dialer{
+					Config: &tls.Config{
+						InsecureSkipVerify: insecure,
+					},
+				}))
+			}
+			client := httpadapter.NewClient(server, opts...)
 			u, e := url.Parse(uri)
 			if e != nil {
 				return
@@ -147,6 +157,8 @@ func client() *cobra.Command {
 	flags.StringVarP(&method, `method`, `M`, http.MethodGet, `request method`)
 	flags.StringSliceVarP(&header, `header`, `H`, nil, `request header key=val`)
 	flags.StringVarP(&server, `server`, `s`, ``, `httpadapter server host:port`)
+	flags.BoolVar(&usetls, `tls`, false, `connect use tls`)
+	flags.BoolVarP(&insecure, `insecure`, `k`, false, `allow insecure server connections when using SSL`)
 	return cmd
 }
 func getInput(locker sync.Locker, r *bufio.Reader) (text bool, b []byte) {

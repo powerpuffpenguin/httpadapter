@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"log"
 	"net"
@@ -107,6 +108,21 @@ func NewTunnelServer(cnf *Tunnel, keys map[string]*httpadapter.Client) (srv *Tun
 		return
 	}
 	key := string(b)
+	if cnf.TLS {
+		key += `-1`
+		if cnf.Insecure {
+			key += `-1`
+		} else {
+			key += `-0`
+		}
+		opts = append(opts, httpadapter.WithDialer(&tls.Dialer{
+			Config: &tls.Config{
+				InsecureSkipVerify: cnf.Insecure,
+			},
+		}))
+	} else {
+		key += `-0-0`
+	}
 	client, ok := keys[key]
 	if !ok {
 		client = httpadapter.NewClient(cnf.Server, opts...)

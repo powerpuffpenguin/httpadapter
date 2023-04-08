@@ -91,6 +91,10 @@ type Tunnel struct {
 	Listen string
 	// httpadapter 服務器地址
 	Server string
+	// 使用 tls 連接服務器
+	TLS bool
+	// 不用 驗證服務器證書
+	Insecure bool
 	// 隧道連接地址
 	Backend string
 
